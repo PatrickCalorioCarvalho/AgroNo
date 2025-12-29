@@ -1,6 +1,6 @@
 # API do Servidor AgroNó
 
-![Servidor API](/img/server-api.svg)
+![Servidor API](/AgroNo/img/server-api.svg)
 
 A API do servidor AgroNó recebe dados dos gateways, processa, armazena e fornece endpoints para dashboards e relatórios.
 

@@ -6,10 +6,10 @@ Plataforma IoT Agrícola de Baixo Custo • Offline-First • Open Source
 
 ```mermaid
 graph TD
-    A["<img src='/img/weather-station.svg' width='60'/><br/>Estação Meteorológica"] -->|Dados Meteorológicos| B["<img src='/img/gateway.svg' width='60'/><br/>Gateway"]
-    C["<img src='/img/soil-sensor.svg' width='60'/><br/>Sensor de Solo"] -->|Dados de Solo| B
-    D["<img src='/img/insect-trap.svg' width='60'/><br/>Armadilha de Insetos"] -->|Contagem de Insetos| B
-    B -->|Dados Agregados| E["<img src='/img/server-api.svg' width='60'/><br/>Servidor API"]
+    A["<img src='/AgroNo/img/weather-station.svg' width='60'/><br/>Estação Meteorológica"] -->|Dados Meteorológicos| B["<img src='/AgroNo/img/gateway.svg' width='60'/><br/>Gateway"]
+    C["<img src='/AgroNo/img/soil-sensor.svg' width='60'/><br/>Sensor de Solo"] -->|Dados de Solo| B
+    D["<img src='/AgroNo/img/insect-trap.svg' width='60'/><br/>Armadilha de Insetos"] -->|Contagem de Insetos| B
+    B -->|Dados Agregados| E["<img src='/AgroNo/img/server-api.svg' width='60'/><br/>Servidor API"]
     E --> F[Dashboards e Relatórios]
 
     click A "/docs/nodes/weather-station"

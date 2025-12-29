@@ -1,6 +1,6 @@
 # Sensor de Solo
 
-![Sensor de Solo](/img/soil-sensor.svg)
+![Sensor de Solo](/AgroNo/img/soil-sensor.svg)
 
 O sensor de solo monitora parâmetros importantes para agricultura como umidade, temperatura do solo, pH e condutividade elétrica (salinidade).
 

@@ -1,6 +1,6 @@
 # Gateway AgroNó
 
-![Gateway AgroNó](/img/gateway.svg)
+![Gateway AgroNó](/AgroNo/img/gateway.svg)
 
 O gateway é o componente central do sistema AgroNó, responsável por receber dados dos nós IoT via rádio, armazenar localmente e sincronizar com o servidor quando a internet estiver disponível.
 

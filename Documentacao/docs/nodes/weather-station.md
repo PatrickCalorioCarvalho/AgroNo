@@ -1,6 +1,6 @@
 # Estação Meteorológica
 
-![Estação Meteorológica](/img/weather-station.svg)
+![Estação Meteorológica](/AgroNo/img/weather-station.svg)
 
 A estação meteorológica é um nó IoT responsável por coletar dados ambientais como temperatura, umidade, pressão atmosférica, velocidade do vento e precipitação.
 

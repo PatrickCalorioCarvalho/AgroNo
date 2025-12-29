@@ -5,10 +5,10 @@ const config = {
   title: 'AgroNó',
   tagline: 'Plataforma IoT Agrícola de Baixo Custo • Offline-First • Open Source',
   favicon: 'img/favicon.ico',
-  url: 'https://your-docusaurus-site.example.com',
-  baseUrl: '/',
+  url: 'https://patrickcaloriocarvalho.github.io',
+  baseUrl: '/AgroNo/',
   organizationName: 'patrickcaloriocarvalho',
-  projectName: 'AgroNó',
+  projectName: 'AgroNo',
   onBrokenLinks: 'throw',
   onBrokenMarkdownLinks: 'warn',
 

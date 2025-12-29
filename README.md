@@ -55,3 +55,4 @@ Este projeto está sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para d
 <p align="center">
   <strong>Feito com ❤️ para agricultura sustentável</strong>
 </p>
+
