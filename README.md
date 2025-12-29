@@ -34,17 +34,17 @@ O **AgroNó** é uma plataforma completa de Internet das Coisas (IoT) desenvolvi
 
 ```mermaid
 graph TD
-    A["🌤️<br/>Estação Meteorológica"] -->|Dados Meteorológicos| B["📡<br/>Gateway"]
-    C["🌱<br/>Sensor de Solo"] -->|Dados de Solo| B
-    D["🐛<br/>Armadilha de Insetos"] -->|Contagem de Insetos| B
-    B -->|Dados Agregados| E["🖥️<br/>Servidor API"]
-    E --> F[📈 Dashboards e Relatórios]
+    A["<img src='Documentacao/static/img/weather-station.svg' width='60'/><br/>Estação Meteorológica"] -->|Dados Meteorológicos| B["<img src='Documentacao/static/img/gateway.svg' width='60'/><br/>Gateway"]
+    C["<img src='Documentacao/static/img/soil-sensor.svg' width='60'/><br/>Sensor de Solo"] -->|Dados de Solo| B
+    D["<img src='Documentacao/static/img/insect-trap.svg' width='60'/><br/>Armadilha de Insetos"] -->|Contagem de Insetos| B
+    B -->|Dados Agregados| E["<img src='/img/server-api.svg' width='60'/><br/>Servidor API"]
+    E --> F[Dashboards e Relatórios]
 
-    click A "https://agrono-docs.netlify.app/docs/nodes/weather-station"
-    click B "https://agrono-docs.netlify.app/docs/gateway"
-    click C "https://agrono-docs.netlify.app/docs/nodes/soil-sensor"
-    click D "https://agrono-docs.netlify.app/docs/nodes/insect-trap"
-    click E "https://agrono-docs.netlify.app/docs/server-api"
+    click A "/docs/nodes/weather-station"
+    click B "/docs/gateway"
+    click C "/docs/nodes/soil-sensor"
+    click D "/docs/nodes/insect-trap"
+    click E "/docs/server-api"
 ```
 
 ### 📡 Componentes do Sistema
