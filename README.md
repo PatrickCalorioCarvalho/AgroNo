@@ -34,10 +34,10 @@ O **AgroNó** é uma plataforma completa de Internet das Coisas (IoT) desenvolvi
 
 ```mermaid
 graph TD
-    A["<img src='Documentacao/static/img/weather-station.svg' width='60'/><br/>Estação Meteorológica"] -->|Dados Meteorológicos| B["<img src='Documentacao/static/img/gateway.svg' width='60'/><br/>Gateway"]
-    C["<img src='Documentacao/static/img/soil-sensor.svg' width='60'/><br/>Sensor de Solo"] -->|Dados de Solo| B
-    D["<img src='Documentacao/static/img/insect-trap.svg' width='60'/><br/>Armadilha de Insetos"] -->|Contagem de Insetos| B
-    B -->|Dados Agregados| E["<img src='/img/server-api.svg' width='60'/><br/>Servidor API"]
+    A["<img src='https://raw.githubusercontent.com/PatrickCalorioCarvalho/AgroNo/main/Documentacao/static/img/weather-station.svg' width='60'/><br/>Estação Meteorológica"] -->|Dados Meteorológicos| B["<img src='https://raw.githubusercontent.com/PatrickCalorioCarvalho/AgroNo/main/Documentacao/static/img/gateway.svg' width='60'/><br/>Gateway"]
+    C["<img src='https://raw.githubusercontent.com/PatrickCalorioCarvalho/AgroNo/main/Documentacao/static/img/soil-sensor.svg' width='60'/><br/>Sensor de Solo"] -->|Dados de Solo| B
+    D["<img src='https://raw.githubusercontent.com/PatrickCalorioCarvalho/AgroNo/main/Documentacao/static/img/insect-trap.svg' width='60'/><br/>Armadilha de Insetos"] -->|Contagem de Insetos| B
+    B -->|Dados Agregados| E["<img src='https://raw.githubusercontent.com/PatrickCalorioCarvalho/AgroNo/main/Documentacao/static/img/server-api.svg' width='60'/><br/>Servidor API"]
     E --> F[Dashboards e Relatórios]
 
     click A "/docs/nodes/weather-station"
