@@ -1,0 +1,1 @@
+"use strict";(globalThis.webpackChunkagrono_docs=globalThis.webpackChunkagrono_docs||[]).push([[6366],{6366(c,e,a){a.d(e,{createArchitectureServices:()=>o.S});var o=a(8980);a(7960)}}]);
