@@ -12,11 +12,11 @@ graph TD
     B -->|Dados Agregados| E["<img src='/AgroNo/img/server-api.svg' width='60'/><br/>Servidor API"]
     E --> F[Dashboards e Relatórios]
 
-    click A "/docs/nodes/weather-station"
-    click B "/docs/gateway"
-    click C "/docs/nodes/soil-sensor"
-    click D "/docs/nodes/insect-trap"
-    click E "/docs/server-api"
+    click A "/AgroNo/docs/nodes/weather-station"
+    click B "/AgroNo/docs/gateway"
+    click C "/AgroNo/docs/nodes/soil-sensor"
+    click D "/AgroNo/docs/nodes/insect-trap"
+    click E "/AgroNo/docs/server-api"
 ```
 
 ## 1️⃣ Visão Geral

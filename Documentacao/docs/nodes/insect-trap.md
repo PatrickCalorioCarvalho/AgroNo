@@ -1,6 +1,6 @@
 # Armadilha de Insetos
 
-![Armadilha de Insetos](/AgroNo/img/insect-trap.svg)
+![Armadilha de Insetos](pathname:///AgroNo/img/insect-trap.svg)
 
 A armadilha de insetos é um dispositivo automatizado para monitoramento de pragas agrícolas. Conta insetos capturados e envia dados periodicamente.
 
