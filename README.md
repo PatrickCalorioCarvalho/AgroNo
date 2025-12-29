@@ -1,7 +1,7 @@
 # 🌱 AgroNó - Plataforma IoT Agrícola
 
 <p align="center">
-  <img src="static/img/logo.svg" alt="AgroNó Logo" width="200"/>
+  <img src="Documentacao/static/img/logo.svg" alt="AgroNó Logo" width="200"/>
 </p>
 
 <p align="center">
