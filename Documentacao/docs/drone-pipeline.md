@@ -1,3 +1,8 @@
+---
+sources:
+  - drone-mapping
+  - pesquisa-drone
+---
 # Pipeline de Imagens
 
 Esta página descreve a **infraestrutura proposta** para receber as fotos do [Drone de Mapeamento](nodes/drone-mapping.md), organizá-las, processá-las e mostrar a evolução das lavouras. Tudo aqui é **proposta de arquitetura**, ainda não implementada.

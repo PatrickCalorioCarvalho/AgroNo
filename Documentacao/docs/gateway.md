@@ -1,3 +1,10 @@
+---
+sources:
+  - architecture
+  - insect-trap
+  - soil-sensor
+  - weather-station
+---
 # Gateway AgroNó
 
 ![Gateway AgroNó](pathname:///AgroNo/img/gateway.svg)

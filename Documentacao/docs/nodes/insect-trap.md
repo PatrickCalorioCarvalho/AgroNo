@@ -1,3 +1,7 @@
+---
+sources:
+  - index
+---
 # Armadilha de Insetos
 
 ![Armadilha de Insetos](pathname:///AgroNo/img/insect-trap.svg)

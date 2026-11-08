@@ -1,3 +1,8 @@
+---
+sources:
+  - architecture
+  - gateway
+---
 # API do Servidor AgroNó
 
 ![Servidor API](pathname:///AgroNo/img/server-api.svg)

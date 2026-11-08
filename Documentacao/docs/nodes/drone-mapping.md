@@ -1,3 +1,10 @@
+---
+sources:
+  - drone-pipeline
+  - index
+  - pesquisa-drone
+  - teoria-mapeamento
+---
 # Drone de Mapeamento (Nó Aéreo)
 
 O drone de mapeamento é um nó **móvel** do AgroNó. Ao contrário dos outros nós, ele não é um ESP32 fixo no campo: é um VANT (DJI Mavic Pro) controlado por um aplicativo Android próprio, o **Mapa Drone**, que planeja o voo em grade, dispara as fotos e registra cada voo.

@@ -1,3 +1,8 @@
+---
+sources:
+  - drone-pipeline
+  - teoria-mapeamento
+---
 # Pesquisa: IA e Agronomia com Drone
 
 Esta página reúne as ideias para usar o [Drone de Mapeamento](nodes/drone-mapping.md) como instrumento de **pesquisa de mestrado**, aplicando inteligência artificial a imagens de lavoura.

@@ -1,3 +1,7 @@
+---
+sources:
+  - index
+---
 # Estação Meteorológica
 
 ![Estação Meteorológica](pathname:///AgroNo/img/weather-station.svg)

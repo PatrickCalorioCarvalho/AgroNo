@@ -1,3 +1,7 @@
+---
+sources:
+  - index
+---
 # Sensor de Solo
 
 ![Sensor de Solo](pathname:///AgroNo/img/soil-sensor.svg)

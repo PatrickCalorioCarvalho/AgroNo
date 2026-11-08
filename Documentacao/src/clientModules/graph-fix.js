@@ -2,6 +2,22 @@
 // (valor fixo no código; as opções minWidth/minHeight são ignoradas).
 // Aqui a função openGraph é substituída: o grafo abre em qualquer tela de
 // tamanho razoável e é escalado para caber na janela.
+import siteConfig from '@generated/docusaurus.config';
+
+// O plugin busca '/docusaurus-graph.json' na raiz do domínio, mas o site
+// está publicado em /AgroNo/ (baseUrl). Sem este ajuste a busca dá 404 e o
+// grafo abre vazio.
+if (typeof window !== 'undefined' && !window.__graphFetchPatched) {
+  window.__graphFetchPatched = true;
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (input === '/docusaurus-graph.json') {
+      input = `${siteConfig.baseUrl}docusaurus-graph.json`;
+    }
+    return originalFetch(input, init);
+  };
+}
+
 const MIN_W = 360;
 const MIN_H = 320;
 const BOX_W = 840; // 800 do canvas + 2 x 20 de padding

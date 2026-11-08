@@ -1,3 +1,7 @@
+---
+sources:
+  - architecture
+---
 # Nós IoT do AgroNó
 
 Esta seção documenta os diferentes tipos de nós IoT desenvolvidos para o sistema AgroNó. Todos os nós utilizam ESP32 como microcontrolador principal, comunicação via rádio (NRF24 ou LoRa) e seguem o mesmo padrão de envio de dados para o gateway.

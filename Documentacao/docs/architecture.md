@@ -1,3 +1,7 @@
+---
+sources:
+  - intro
+---
 # Arquitetura do Sistema AgroNó
 
 ## Visão Geral da Arquitetura
