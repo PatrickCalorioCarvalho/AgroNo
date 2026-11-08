@@ -90,20 +90,68 @@ function applyGraphTheme() {
   installNodePainter(graphViewGlobal);
 }
 
-// Espalha os nós e deixa a simulação estabilizar (o padrão para em 200 ms).
+// Trilha de leitura: cada página pertence a uma etapa, e o grafo é organizado
+// em colunas da esquerda para a direita, do sistema base até a pesquisa.
+// (O plugin só desenha ligações; a ordem aqui é definida à mão.)
+const STAGES = [
+  { label: '1 · Visão geral', ids: ['intro', 'architecture', 'development'] },
+  {
+    label: '2 · Infraestrutura IoT',
+    ids: ['index', 'weather-station', 'insect-trap', 'soil-sensor', 'gateway', 'server-api'],
+  },
+  { label: '3 · Drone', ids: ['drone-mapping'] },
+  { label: '4 · Teoria', ids: ['teoria-mapeamento'] },
+  { label: '5 · Pipeline', ids: ['drone-pipeline'] },
+  { label: '6 · Pesquisa', ids: ['pesquisa-drone'] },
+];
+const STAGE_GAP = 250;
+const stageOf = {};
+STAGES.forEach((st, i) => st.ids.forEach((id) => (stageOf[id] = i)));
+const stageX = (i) => (i - (STAGES.length - 1) / 2) * STAGE_GAP;
+
+// Etapas com um único nó alternam acima/abaixo para os rótulos não colidirem.
+function targetY(id) {
+  const i = stageOf[id];
+  if (i === undefined || STAGES[i].ids.length > 1) return 0;
+  return i % 2 === 0 ? -70 : 70;
+}
+
 let forcesTuned = false;
 function tuneGraphForces() {
   if (forcesTuned || typeof graphViewGlobal === 'undefined' || !graphViewGlobal) {
     return;
   }
   const fg = graphViewGlobal.forceGraph;
-  fg.d3Force('charge').strength(-700);
-  fg.d3Force('link').distance(130);
-  fg.d3Force('collide').radius(48);
+  fg.d3Force('charge').strength(-380);
+  fg.d3Force('link').distance(90).strength(0.03);
+  fg.d3Force('collide').radius(42);
+  fg
+    .d3Force('x')
+    .x((n) => (stageOf[n.id] === undefined ? 0 : stageX(stageOf[n.id])))
+    .strength((n) => (stageOf[n.id] === undefined ? 0.02 : 0.95));
+  fg.d3Force('y').y((n) => targetY(n.id)).strength(0.12);
+
+  fg.linkDirectionalArrowLength(6).linkDirectionalArrowRelPos(0.92);
+
+  // Títulos das colunas, desenhados acima dos nós.
+  fg.onRenderFramePre((ctx, scale) => {
+    const nodes = graphViewGlobal.model.graphData.nodes;
+    const ys = nodes.map((n) => n.y).filter((y) => Number.isFinite(y));
+    if (!ys.length) return;
+    const top = Math.min(...ys) - 55;
+    ctx.save();
+    ctx.font = `bold ${13 / scale}px Sans-Serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = cssVar('--ifm-color-emphasis-600', '#777');
+    STAGES.forEach((st, i) => ctx.fillText(st.label, stageX(i), top));
+    ctx.restore();
+  });
+
   fg.cooldownTime(4000);
   forcesTuned = true;
   fg.d3ReheatSimulation();
-  setTimeout(() => fg.zoomToFit(600, 50), 4200);
+  setTimeout(() => fg.zoomToFit(600, 110), 4200);
 }
 
 if (typeof window !== 'undefined') {
@@ -143,7 +191,7 @@ if (typeof window !== 'undefined') {
         } catch (e) {
           console.warn('graph-fix: não foi possível ajustar o grafo', e);
         }
-        graphViewGlobal.forceGraph.zoomToFit(1000, 50);
+        graphViewGlobal.forceGraph.zoomToFit(1000, 110);
       }
       isOpen = true;
     };
