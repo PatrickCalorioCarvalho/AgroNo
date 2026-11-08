@@ -15,7 +15,8 @@
     "id": "intro",
     "title": "Welcome to AgroNó",
     "linkTo": [
-      "architecture"
+      "architecture",
+      "development"
     ],
     "referencedBy": []
   },
@@ -23,7 +24,9 @@
     "id": "development",
     "title": "Guia de Desenvolvimento - GitHub Flow",
     "linkTo": [],
-    "referencedBy": []
+    "referencedBy": [
+      "intro"
+    ]
   },
   {
     "id": "drone-pipeline",
