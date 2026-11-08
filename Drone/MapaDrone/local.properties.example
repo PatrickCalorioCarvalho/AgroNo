@@ -1,0 +1,4 @@
+sdk.dir=C\:\\Users\\SEU_USUARIO\\AppData\\Local\\Android\\Sdk
+
+# App Key gerada em https://developer.dji.com (package name: com.mapadrone.app)
+DJI_APP_KEY=

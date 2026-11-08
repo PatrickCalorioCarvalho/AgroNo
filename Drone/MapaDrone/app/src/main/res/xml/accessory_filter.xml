@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <usb-accessory manufacturer="DJI" model="T600" />
+    <usb-accessory manufacturer="DJI" model="AG410" />
+    <usb-accessory manufacturer="DJI" model="com.dji.logiclink" />
+    <usb-accessory manufacturer="DJI" model="WM230" />
+</resources>

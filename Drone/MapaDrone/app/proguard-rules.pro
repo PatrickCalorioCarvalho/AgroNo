@@ -1,0 +1,1 @@
+# Sem minificacao no MVP.

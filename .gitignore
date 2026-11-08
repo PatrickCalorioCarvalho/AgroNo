@@ -1,0 +1,16 @@
+# Ambientes virtuais e caches Python
+.venv/
+__pycache__/
+*.pyc
+
+# Build e cache Gradle/Android
+.gradle/
+build/
+local.properties
+
+# Credenciais de sincronização (contém tokens)
+docssync.yaml
+.precommit/
+
+# Material de proposta (fora do escopo do repositório de pesquisa)
+Proposta/
