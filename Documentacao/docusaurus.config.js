@@ -41,6 +41,8 @@ const config = {
 
 themes: [ [ '@docusaurus/theme-mermaid', { mermaid: { theme: 'handDrawn' }, }, ], ],
 
+  clientModules: [require.resolve('./src/clientModules/graph-fix.js')],
+
   plugins: [
     [
       'docusaurus-graph',
