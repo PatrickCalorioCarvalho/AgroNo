@@ -1,3 +1,7 @@
+---
+sources:
+  - intro
+---
 # Guia de Desenvolvimento - GitHub Flow
 
 Este documento descreve o fluxo de desenvolvimento usado no projeto AgroNó, baseado no GitHub Flow.
