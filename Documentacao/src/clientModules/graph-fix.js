@@ -23,7 +23,56 @@ const MIN_H = 320;
 const BOX_W = 840; // 800 do canvas + 2 x 20 de padding
 const BOX_H = 640; // 600 do canvas + 2 x 20 de padding
 
+// Aplica ao grafo as cores do tema atual do site (claro/escuro).
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+  return v || fallback;
+}
+
+function applyGraphTheme() {
+  if (typeof graphViewGlobal === 'undefined' || !graphViewGlobal) return;
+  const primary = cssVar('--ifm-color-primary', '#2e8555');
+  const strong = cssVar('--ifm-color-emphasis-900', '#444');
+  graphViewGlobal.updateStyle({
+    background: cssVar('--ifm-background-surface-color', '#fff'),
+    fontSize: 13,
+    highlightedForeground: strong,
+    node: { note: { regular: primary } },
+    link: {
+      regular: cssVar('--ifm-color-emphasis-300', '#ccc'),
+      highlighted: primary,
+    },
+    hoverNodeLink: {
+      highlightedDirection: { inbound: primary, outbound: strong },
+    },
+  });
+}
+
+// Espalha os nós e deixa a simulação rodar o bastante para estabilizar
+// (o padrão do plugin para em 200 ms e deixa os rótulos sobrepostos).
+let forcesTuned = false;
+function tuneGraphForces() {
+  if (forcesTuned || typeof graphViewGlobal === 'undefined' || !graphViewGlobal) {
+    return;
+  }
+  const fg = graphViewGlobal.forceGraph;
+  fg.d3Force('charge').strength(-420);
+  fg.d3Force('link').distance(110);
+  fg.cooldownTime(3500);
+  forcesTuned = true;
+  fg.d3ReheatSimulation();
+  setTimeout(() => fg.zoomToFit(600, 60), 3700);
+}
+
 if (typeof window !== 'undefined') {
+  // Reaplica as cores quando o usuário alterna entre tema claro e escuro.
+  new MutationObserver(applyGraphTheme).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  });
+
   window.addEventListener('load', () => {
     window.openGraph = function () {
       const container = document.getElementById('graph-container');
@@ -47,8 +96,14 @@ if (typeof window !== 'undefined') {
       container.style.transform = `translate(-50%, -50%) scale(${scale})`;
       container.style.display = 'block';
       overlay.style.display = 'block';
-      if (typeof graphViewGlobal !== 'undefined') {
-        graphViewGlobal.forceGraph.zoomToFit(1000, 20);
+      try {
+        applyGraphTheme();
+        tuneGraphForces();
+      } catch (e) {
+        console.warn('graph-fix: não foi possível ajustar o grafo', e);
+      }
+      if (typeof graphViewGlobal !== 'undefined' && graphViewGlobal) {
+        graphViewGlobal.forceGraph.zoomToFit(1000, 60);
       }
       isOpen = true;
     };
