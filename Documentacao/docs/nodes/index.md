@@ -16,6 +16,7 @@ Esta seção documenta os diferentes tipos de nós IoT desenvolvidos para o sist
 - [Estação Meteorológica](weather-station.md)
 - [Armadilha de Insetos](insect-trap.md)
 - [Sensor de Solo](soil-sensor.md)
+- [Drone de Mapeamento](drone-mapping.md) (nó móvel, não usa rádio)
 
 ## Fluxo Geral de Dados
 

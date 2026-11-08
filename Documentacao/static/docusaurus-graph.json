@@ -12,6 +12,12 @@
     "referencedBy": []
   },
   {
+    "id": "drone-pipeline",
+    "title": "Pipeline de Imagens",
+    "linkTo": [],
+    "referencedBy": []
+  },
+  {
     "id": "gateway",
     "title": "Gateway AgroNó",
     "linkTo": [],
@@ -20,6 +26,12 @@
   {
     "id": "intro",
     "title": "Welcome to AgroNó",
+    "linkTo": [],
+    "referencedBy": []
+  },
+  {
+    "id": "drone-mapping",
+    "title": "Drone de Mapeamento (Nó Aéreo)",
     "linkTo": [],
     "referencedBy": []
   },
@@ -48,8 +60,20 @@
     "referencedBy": []
   },
   {
+    "id": "pesquisa-drone",
+    "title": "Pesquisa: IA e Agronomia com Drone",
+    "linkTo": [],
+    "referencedBy": []
+  },
+  {
     "id": "server-api",
     "title": "API do Servidor AgroNó",
+    "linkTo": [],
+    "referencedBy": []
+  },
+  {
+    "id": "teoria-mapeamento",
+    "title": "Teoria do Mapeamento Aéreo",
     "linkTo": [],
     "referencedBy": []
   }
