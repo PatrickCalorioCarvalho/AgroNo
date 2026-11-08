@@ -2,7 +2,21 @@
   {
     "id": "architecture",
     "title": "Arquitetura do Sistema AgroNó",
-    "linkTo": [],
+    "linkTo": [
+      "gateway",
+      "index",
+      "server-api"
+    ],
+    "referencedBy": [
+      "intro"
+    ]
+  },
+  {
+    "id": "intro",
+    "title": "Welcome to AgroNó",
+    "linkTo": [
+      "architecture"
+    ],
     "referencedBy": []
   },
   {
@@ -14,67 +28,96 @@
   {
     "id": "drone-pipeline",
     "title": "Pipeline de Imagens",
-    "linkTo": [],
-    "referencedBy": []
-  },
-  {
-    "id": "gateway",
-    "title": "Gateway AgroNó",
-    "linkTo": [],
-    "referencedBy": []
-  },
-  {
-    "id": "intro",
-    "title": "Welcome to AgroNó",
-    "linkTo": [],
-    "referencedBy": []
+    "linkTo": [
+      "drone-mapping",
+      "pesquisa-drone"
+    ],
+    "referencedBy": [
+      "drone-mapping",
+      "pesquisa-drone"
+    ]
   },
   {
     "id": "drone-mapping",
     "title": "Drone de Mapeamento (Nó Aéreo)",
-    "linkTo": [],
-    "referencedBy": []
-  },
-  {
-    "id": "index",
-    "title": "Nós IoT do AgroNó",
-    "linkTo": [],
-    "referencedBy": []
-  },
-  {
-    "id": "insect-trap",
-    "title": "Armadilha de Insetos",
-    "linkTo": [],
-    "referencedBy": []
-  },
-  {
-    "id": "soil-sensor",
-    "title": "Sensor de Solo",
-    "linkTo": [],
-    "referencedBy": []
-  },
-  {
-    "id": "weather-station",
-    "title": "Estação Meteorológica",
-    "linkTo": [],
+    "linkTo": [
+      "drone-pipeline"
+    ],
     "referencedBy": []
   },
   {
     "id": "pesquisa-drone",
     "title": "Pesquisa: IA e Agronomia com Drone",
-    "linkTo": [],
+    "linkTo": [
+      "drone-pipeline",
+      "drone-mapping"
+    ],
+    "referencedBy": []
+  },
+  {
+    "id": "gateway",
+    "title": "Gateway AgroNó",
+    "linkTo": [
+      "server-api"
+    ],
+    "referencedBy": [
+      "architecture",
+      "insect-trap",
+      "soil-sensor",
+      "weather-station"
+    ]
+  },
+  {
+    "id": "insect-trap",
+    "title": "Armadilha de Insetos",
+    "linkTo": [
+      "gateway"
+    ],
+    "referencedBy": []
+  },
+  {
+    "id": "soil-sensor",
+    "title": "Sensor de Solo",
+    "linkTo": [
+      "gateway"
+    ],
+    "referencedBy": []
+  },
+  {
+    "id": "weather-station",
+    "title": "Estação Meteorológica",
+    "linkTo": [
+      "gateway"
+    ],
+    "referencedBy": []
+  },
+  {
+    "id": "index",
+    "title": "Nós IoT do AgroNó",
+    "linkTo": [
+      "drone-mapping",
+      "insect-trap",
+      "soil-sensor",
+      "weather-station"
+    ],
+    "referencedBy": []
+  },
+  {
+    "id": "teoria-mapeamento",
+    "title": "Teoria do Mapeamento Aéreo",
+    "linkTo": [
+      "drone-mapping",
+      "pesquisa-drone"
+    ],
     "referencedBy": []
   },
   {
     "id": "server-api",
     "title": "API do Servidor AgroNó",
     "linkTo": [],
-    "referencedBy": []
-  },
-  {
-    "id": "teoria-mapeamento",
-    "title": "Teoria do Mapeamento Aéreo",
-    "linkTo": [],
-    "referencedBy": []
+    "referencedBy": [
+      "architecture",
+      "gateway"
+    ]
   }
 ]
