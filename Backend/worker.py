@@ -151,7 +151,11 @@ def fetch_orthophoto(uuid, dest):
     tentativa e validada pelo cabecalho TIFF.
     """
     for asset in ("orthophoto.tif", "odm_orthophoto/odm_orthophoto.tif"):
-        _download(f"{ODM}/task/{uuid}/download/{asset}", dest)
+        try:
+            _download(f"{ODM}/task/{uuid}/download/{asset}", dest)
+        except requests.RequestException as e:  # 404 etc.: tenta o proximo nome
+            log(f"asset '{asset}' recusado: {e}")
+            continue
         if is_tiff(dest):
             log(f"ortomosaico baixado como asset '{asset}'")
             return True
