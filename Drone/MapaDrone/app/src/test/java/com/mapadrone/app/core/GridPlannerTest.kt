@@ -86,4 +86,71 @@ class GridPlannerTest {
     fun needsThreeCorners() {
         GridPlanner.plan(rect(12.0, 50.0).take(2), PlanParams())
     }
+
+    @Test
+    fun resumeSkipsAlreadyPhotographedWaypoints() {
+        val plan = GridPlanner.plan(rect(width = 30.0, length = 40.0), PlanParams(altitudeM = 15.0))
+        val skip = 20
+        val resumed = GridPlanner.resume(plan, skip)
+        assertEquals(plan.waypointCount - skip, resumed.waypointCount)
+        assertEquals(plan.parts.flatten()[skip].position, resumed.parts.first().first().position)
+        assertTrue(resumed.totalDistanceM < plan.totalDistanceM)
+    }
+
+    // --- Recorte pelo poligono marcado ---
+
+    private fun inside(poly: List<XY>, x: Double, y: Double): Boolean {
+        var c = false
+        for (i in poly.indices) {
+            val a = poly[i]; val b = poly[(i + 1) % poly.size]
+            if ((a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) c = !c
+        }
+        return c
+    }
+
+    private fun distToEdges(poly: List<XY>, x: Double, y: Double): Double =
+        poly.indices.minOf { i ->
+            val a = poly[i]; val b = poly[(i + 1) % poly.size]
+            val dx = b.x - a.x; val dy = b.y - a.y
+            val t = (((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy)).coerceIn(0.0, 1.0)
+            Math.hypot(x - (a.x + t * dx), y - (a.y + t * dy))
+        }
+
+    private fun assertWaypointsHugArea(shape: List<Pair<Double, Double>>, params: PlanParams = PlanParams()) {
+        val corners = shape.map { (x, y) -> frame.toLatLon(x, y) }
+        val poly = shape.map { (x, y) -> XY(x, y) }
+        val plan = GridPlanner.plan(corners, params)
+        plan.parts.flatten().forEach {
+            val p = frame.toXY(it.position)
+            val d = if (inside(poly, p.x, p.y)) 0.0 else distToEdges(poly, p.x, p.y)
+            assertTrue("ponto a ${"%.1f".format(d)} m da area", d <= params.endMarginM + 0.6)
+        }
+    }
+
+    @Test
+    fun triangleDoesNotFillItsBoundingRectangle() {
+        val tri = listOf(0.0 to 0.0, 60.0 to 0.0, 0.0 to 40.0)
+        assertWaypointsHugArea(tri)
+        val plan = GridPlanner.plan(tri.map { (x, y) -> frame.toLatLon(x, y) }, PlanParams())
+        val rectPlan = GridPlanner.plan(rect(40.0, 60.0), PlanParams())
+        assertTrue(plan.waypointCount < rectPlan.waypointCount * 0.75)
+    }
+
+    @Test
+    fun trapezoidStaysInsideMarkedArea() {
+        assertWaypointsHugArea(listOf(0.0 to 0.0, 60.0 to 0.0, 45.0 to 25.0, 10.0 to 25.0))
+    }
+
+    @Test
+    fun concaveLShapeSkipsTheNotch() {
+        assertWaypointsHugArea(listOf(0.0 to 0.0, 40.0 to 0.0, 40.0 to 10.0, 10.0 to 10.0, 10.0 to 30.0, 0.0 to 30.0))
+    }
+
+    @Test
+    fun rotatedSkewedQuadStaysInsideArea() {
+        val a = Math.toRadians(25.0)
+        val quad = listOf(0.0 to 0.0, 70.0 to 5.0, 55.0 to 30.0, 5.0 to 22.0).map { (x, y) -> (x * cos(a) - y * sin(a)) to (x * sin(a) + y * cos(a)) }
+        assertWaypointsHugArea(quad)
+        assertWaypointsHugArea(quad, PlanParams(altitudeM = 15.0))
+    }
 }

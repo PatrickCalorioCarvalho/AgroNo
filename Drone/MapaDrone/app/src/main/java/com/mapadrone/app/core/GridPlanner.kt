@@ -19,7 +19,9 @@ data class PlanParams(
     val maxWaypointsPerPart: Int = 95,
     val maxTotalWaypoints: Int = 600,
     /** Tempo medio parado em cada waypoint (estabilizar + foto), usado so na estimativa. */
-    val secondsPerWaypoint: Double = 3.5
+    val secondsPerWaypoint: Double = 3.5,
+    /** false reproduz o planejador antigo (retangulo envolvente), usado so para continuar voos antigos. */
+    val clipToPolygon: Boolean = true
 ) {
     /** Retorna uma mensagem de erro, ou null se os parametros estao dentro dos limites seguros. */
     fun validate(): String? = when {
@@ -32,7 +34,8 @@ data class PlanParams(
     }
 }
 
-data class PlanWaypoint(val position: LatLon, val lineIndex: Int)
+/** [photo] = false para pontos de passagem sem foto (ex.: retorno ao ponto de pouso). */
+data class PlanWaypoint(val position: LatLon, val lineIndex: Int, val photo: Boolean = true)
 
 data class Plan(
     val params: PlanParams,
@@ -82,31 +85,47 @@ object GridPlanner {
         // As linhas externas ficam um pouco para dentro da area: todo ponto da area e visto por >= 2 linhas.
         val edgeInset = max(0.0, across / 2 - lineSpacingMax)
         val span = box.vRange - 2 * edgeInset
-        val lineCount = if (span <= 0.01) 1 else ceil(span / lineSpacingMax - 1e-9).toInt() + 1
-        val vPositions = if (lineCount == 1) {
+        val lineCountPlanned = if (span <= 0.01) 1 else ceil(span / lineSpacingMax - 1e-9).toInt() + 1
+        val vPositions = if (lineCountPlanned == 1) {
             listOf(box.v0 + box.vRange / 2)
         } else {
-            (0 until lineCount).map { box.v0 + edgeInset + it * span / (lineCount - 1) }
+            // eps: evita linha exatamente sobre a borda do poligono
+            (0 until lineCountPlanned).map { (box.v0 + edgeInset + it * span / (lineCountPlanned - 1)).coerceIn(box.v0 + 0.01, box.v1 - 0.01) }
         }
-        val lineSpacing = if (lineCount == 1) 0.0 else span / (lineCount - 1)
-
-        val uStart = box.u0 - params.endMarginM
-        val uEnd = box.u1 + params.endMarginM
-        val lineLen = uEnd - uStart
-        val perLine = ceil(lineLen / photoSpacingMax - 1e-9).toInt() + 1
-        val photoSpacing = lineLen / (perLine - 1)
-
-        require(lineCount * perLine <= params.maxTotalWaypoints) {
-            "Area grande demais para o MVP (${lineCount * perLine} pontos, maximo ${params.maxTotalWaypoints})."
-        }
+        val lineSpacing = if (lineCountPlanned == 1) 0.0 else span / (lineCountPlanned - 1)
 
         val cosT = cos(theta)
         val sinT = sin(theta)
         fun point(u: Double, v: Double) = frame.toLatLon(u * cosT - v * sinT, u * sinT + v * cosT)
 
-        val lines = vPositions.mapIndexed { i, v ->
-            val ordered = (0 until perLine).map { k -> uStart + k * photoSpacing }.let { if (i % 2 == 0) it else it.reversed() }
-            ordered.map { u -> PlanWaypoint(point(u, v), i) }
+        // Poligono marcado no referencial girado (u ao longo do voo, v entre as linhas).
+        val poly = pts.map { XY(it.x * cosT + it.y * sinT, -it.x * sinT + it.y * cosT) }
+
+        // Cada linha de voo e recortada pelo poligono: so ha fotos dentro da area marcada (mais a margem das pontas).
+        var spacingUsed = 0.0
+        val built = vPositions.mapNotNull { v ->
+            val segments = if (params.clipToPolygon) clipLine(poly, v, params.endMarginM)
+                else listOf((box.u0 - params.endMarginM) to (box.u1 + params.endMarginM))
+            if (segments.isEmpty()) return@mapNotNull null
+            segments.flatMap { (u0, u1) ->
+                val len = u1 - u0
+                val n = if (len < 1e-6) 1 else ceil(len / photoSpacingMax - 1e-9).toInt() + 1
+                val step = if (n == 1) 0.0 else len / (n - 1)
+                if (step > spacingUsed) spacingUsed = step
+                (0 until n).map { k -> point(u0 + k * step, v) }
+            }
+        }
+        require(built.isNotEmpty()) { "Area pequena demais para gerar linhas de voo." }
+        val lines = built.mapIndexed { i, ptsLine ->
+            val ordered = if (i % 2 == 0) ptsLine else ptsLine.reversed()
+            ordered.map { PlanWaypoint(it, i) }
+        }
+        val perLine = lines.maxOf { it.size }
+        val photoSpacing = spacingUsed
+        val lineCount = lines.size
+
+        require(lines.sumOf { it.size } <= params.maxTotalWaypoints) {
+            "Area grande demais para o MVP (${lines.sumOf { it.size }} pontos, maximo ${params.maxTotalWaypoints})."
         }
 
         val parts = splitIntoParts(lines, params.maxWaypointsPerPart)
@@ -134,17 +153,57 @@ object GridPlanner {
         )
     }
 
+    /** Plano para continuar um voo: descarta os [skip] primeiros pontos e reagrupa o resto em partes. */
+    fun resume(plan: Plan, skip: Int): Plan {
+        val remaining = plan.parts.flatten().drop(skip.coerceIn(0, plan.waypointCount - 1))
+        val distance = remaining.zipWithNext().sumOf { (a, b) -> Geo.distance(a.position, b.position) }
+        return plan.copy(
+            parts = remaining.chunked(plan.params.maxWaypointsPerPart),
+            totalDistanceM = distance,
+            estimatedSeconds = distance / plan.params.speedMs + remaining.size * plan.params.secondsPerWaypoint
+        )
+    }
+
     private fun splitIntoParts(lines: List<List<PlanWaypoint>>, maxPerPart: Int): List<List<PlanWaypoint>> {
-        val perLine = lines.first().size
-        if (perLine > maxPerPart) {
-            // Linha maior que o limite de uma missao: corta em pedacos.
-            return lines.flatten().chunked(maxPerPart)
+        val total = lines.sumOf { it.size }
+        val partsNeeded = ceil(total.toDouble() / maxPerPart).toInt()
+        val target = min(maxPerPart, ceil(total.toDouble() / partsNeeded).toInt())
+        val parts = mutableListOf<List<PlanWaypoint>>()
+        var current = mutableListOf<PlanWaypoint>()
+        fun flush() { if (current.isNotEmpty()) { parts += current; current = mutableListOf() } }
+        for (line in lines) {
+            if (line.size > maxPerPart) {
+                // Linha maior que o limite de uma missao: corta em pedacos.
+                flush()
+                line.chunked(maxPerPart).forEach { parts += it }
+                continue
+            }
+            if (current.isNotEmpty() && current.size + line.size > target) flush()
+            current.addAll(line)
         }
-        val maxLinesPerPart = max(1, maxPerPart / perLine)
-        val partsNeeded = ceil(lines.size.toDouble() * perLine / maxPerPart).toInt()
-        val balanced = ceil(lines.size.toDouble() / partsNeeded).toInt()
-        val linesPerPart = min(balanced, maxLinesPerPart)
-        return lines.chunked(linesPerPart).map { it.flatten() }
+        flush()
+        return parts
+    }
+
+    /** Trechos [u0, u1] da linha v dentro do poligono (pares de cruzamentos), cada um estendido pela margem. */
+    private fun clipLine(poly: List<XY>, v: Double, margin: Double): List<Pair<Double, Double>> {
+        val us = mutableListOf<Double>()
+        for (i in poly.indices) {
+            val a = poly[i]
+            val b = poly[(i + 1) % poly.size]
+            // regra meio-aberta: um vertice exatamente sobre a linha conta uma vez so
+            if ((a.y <= v) != (b.y <= v)) us += a.x + (v - a.y) / (b.y - a.y) * (b.x - a.x)
+        }
+        us.sort()
+        val raw = us.chunked(2).filter { it.size == 2 }.map { (it[0] - margin) to (it[1] + margin) }
+        // junta trechos que se encostam depois de aplicar a margem
+        val merged = mutableListOf<Pair<Double, Double>>()
+        for (seg in raw) {
+            val last = merged.lastOrNull()
+            if (last != null && seg.first <= last.second) merged[merged.lastIndex] = last.first to max(last.second, seg.second)
+            else merged += seg
+        }
+        return merged
     }
 
     private class Box(val u0: Double, val u1: Double, val v0: Double, val v1: Double) {
