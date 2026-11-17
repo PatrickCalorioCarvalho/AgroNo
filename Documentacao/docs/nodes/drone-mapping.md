@@ -7,7 +7,7 @@ sources:
 ---
 # Drone de Mapeamento (Nó Aéreo)
 
-O drone de mapeamento é um nó **móvel** do AgroNó. Ao contrário dos outros nós, ele não é um ESP32 fixo no campo: é um VANT (DJI Mavic Pro) controlado por um aplicativo Android próprio, o **Mapa Drone**, que planeja o voo em grade, dispara as fotos e registra cada voo.
+O drone de mapeamento é um nó **móvel** do AgroNó. Ao contrário dos outros nós, ele não é um ESP32 fixo no campo: é um VANT (DJI Mavic Pro) controlado por um aplicativo Android próprio, o **AgroNo Fly**, que planeja o voo em grade, dispara as fotos e registra cada voo.
 
 Os dados dele são **volumosos e esporádicos** (centenas de fotos por voo, alguns voos por semana ou mês), enquanto os outros nós enviam poucos bytes com frequência. Por isso ele não usa o rádio NRF24/LoRa: usa o celular (Wi-Fi/4G) e envio em lote.
 
@@ -36,7 +36,7 @@ O aplicativo compila, o gerador de grade tem 8 testes automatizados passando e o
 - **Celular**: Android (de preferência 8 a 11, por causa do SDK v4 da DJI)
 - **Armazenamento**: cartão microSD do drone (as fotos ficam nele)
 
-## Aplicativo Mapa Drone
+## Aplicativo AgroNo Fly
 
 - **Linguagem**: Kotlin
 - **SDK**: DJI Mobile SDK v4.18 (o v5 não suporta o Mavic Pro)
@@ -156,6 +156,8 @@ A contagem `photosTriggered` é a de pontos concluídos. O total real é conferi
 ## Integração com o AgroNó
 
 O drone entra na plataforma como um nó do tipo `drone`, mas conversa com o servidor **direto pelo celular**, sem passar pelo rádio do gateway. O princípio **offline-first** se mantém: o registro fica no celular e é enviado quando houver internet.
+
+Na prática, o app (tablet no controle) sincroniza cada voo com o **AgroNo Fly Server** (veja o [Pipeline de Imagens](../drone-pipeline.md)) e pode baixar as fotos do cartão SD pelo próprio controle, sem tirar o cartão. Um voo interrompido (por exemplo, bateria) pode ser retomado a partir do último ponto fotografado, e a missão pausa sozinha com bateria em 35% ou menos.
 
 Evento enviado à API existente (`POST /api/dados`) quando o voo termina:
 

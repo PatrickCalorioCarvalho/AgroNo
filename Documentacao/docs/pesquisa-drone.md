@@ -53,7 +53,7 @@ A 8 m de altura cada pixel mede cerca de 2,6 mm: ótimo para detalhe, mas inviá
 
 ```mermaid
 graph TD
-    A["Voo com protocolo fixo<br/>app Mapa Drone"] --> B["Ortomosaico<br/>WebODM"]
+    A["Voo com protocolo fixo<br/>app AgroNo Fly"] --> B["Ortomosaico<br/>WebODM"]
     B --> C["Cortar em blocos<br/>640 ou 1024 pixels"]
     C --> D["Rotular uma amostra<br/>Label Studio, CVAT ou Roboflow"]
     D --> E["Treinar o modelo<br/>YOLO ou U-Net"]

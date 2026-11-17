@@ -5,16 +5,29 @@ sources:
 ---
 # Pipeline de Imagens
 
-Esta página descreve a **infraestrutura proposta** para receber as fotos do [Drone de Mapeamento](nodes/drone-mapping.md), organizá-las, processá-las e mostrar a evolução das lavouras. Tudo aqui é **proposta de arquitetura**, ainda não implementada.
+Esta página descreve a **infraestrutura proposta** para receber as fotos do [Drone de Mapeamento](nodes/drone-mapping.md), organizá-las, processá-las e mostrar a evolução das lavouras. O desenho completo abaixo é **proposta de arquitetura**; a [primeira versão funcional](#o-que-já-existe-agrono-fly-server) já roda (servidor, fila e mosaico simples).
 
 A ideia é reaproveitar o que o AgroNó já tem (API, banco, dashboards) e acrescentar o que falta para dados de imagem: armazenamento de objetos, fila e workers de processamento.
+
+## O que já existe: AgroNo Fly Server
+
+Uma versão enxuta da proposta já funciona na pasta `Backend/` do repositório (Python, sem banco de dados):
+
+| Peça | O que faz |
+|---|---|
+| **App AgroNo Fly** | Envia cada voo ao servidor (rota planejada, polígono, parâmetros, **nome da área**, ponto H, log). Também baixa as fotos do cartão SD do drone pelo controle e as envia, separando o voo pelo horário. |
+| **Servidor (`server.py`)** | Recebe voos e fotos, gera miniaturas e guarda tudo por voo (`<voo_id>/voo.json`, `originais/`, `miniaturas/`, `mosaico/`) em disco ou no RustFS (S3). Serve uma página com mapa, rota, galeria e voos agrupados pelo nome da área. |
+| **Fila e worker (`worker.py`)** | O botão **Gerar mosaico** coloca o voo numa fila simples; o worker baixa as fotos, processa no NodeODM e devolve `orthophoto.tif` e uma prévia `mosaico.jpg`. |
+| **Deploy** | `docker compose up -d --build` sobe RustFS, API, NodeODM e worker. Um script local de deploy envia o `Backend/` ao servidor por SSH. |
+
+O que **ainda não existe** em relação à proposta: PostgreSQL/PostGIS, RabbitMQ/NATS/Redis (a fila é um arquivo de estado por voo), URLs assinadas, COG e tiles, índices de vegetação, cadastro de talhões e autenticação (use só em rede confiável). O processamento no NodeODM real ainda não foi validado de ponta a ponta.
 
 ## Visão geral
 
 ```mermaid
 graph TD
     subgraph "Campo"
-        APP["App Mapa Drone"]
+        APP["App AgroNo Fly"]
         SD["Cartão SD do drone"]
         N["Nós IoT<br/>solo, clima, armadilha"] --> GW["Gateway"]
     end
@@ -119,7 +132,7 @@ O Mavic Pro grava no cartão SD. Baixar centenas de fotos pelo controle remoto �
 
 ```mermaid
 sequenceDiagram
-    participant App as App Mapa Drone
+    participant App as App AgroNo Fly
     participant API as API AgroNó
     participant UP as Uploader (PC)
     participant S3 as RustFS
@@ -175,7 +188,7 @@ O OpenDroneMap exige bastante CPU e memória (a ordem de grandeza é de 8 vCPU e
 | Fase | Entrega | Infraestrutura |
 |---|---|---|
 | 1 | Validar o voo com o app | Só o celular |
-| 2 | Processar um voo e visualizar | WebODM e QGIS no PC |
+| 2 | Processar um voo e visualizar | WebODM e QGIS no PC (ou o botão Gerar mosaico do AgroNo Fly Server) |
 | 3 | Pipeline automatizado | Docker Compose: API, RustFS, PostgreSQL, NodeODM |
 | 4 | Front com linha do tempo | Acrescenta tiles e interface web |
 | 5 | Escala | Kubernetes com workers em pods, se for necessário |
