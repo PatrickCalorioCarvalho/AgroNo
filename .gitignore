@@ -14,3 +14,11 @@ docssync.yaml
 
 # Material de proposta (fora do escopo do repositório de pesquisa)
 Proposta/
+
+# Dados do servidor de voos (fotos e rotas)
+Backend/data/
+Backend/.venv/
+Backend/.env
+
+# Script de deploy local (pede host/usuario SSH; especifico do ambiente)
+deploy.ps1

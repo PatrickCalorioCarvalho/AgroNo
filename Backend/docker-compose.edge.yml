@@ -1,0 +1,24 @@
+# Overlay opcional: publica a API atras do gateway Traefik (HomeLabDevelopment) em /agrono-fly,
+# sem misturar isso no docker-compose.yml principal, que sobe normalmente sem a rede "edge".
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.edge.yml up -d --build
+#
+# Requer a rede externa "edge" (so existe na mesma vm-docker do gateway). A pagina e a API usam URLs
+# relativas, entao funcionam sob o prefixo removido pelo stripprefix.
+services:
+  agrono-fly-api:
+    networks:
+      - default
+      - edge
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.agrono-fly.rule=PathPrefix(`/agrono-fly`)"
+      - "traefik.http.routers.agrono-fly.priority=50"
+      - "traefik.http.routers.agrono-fly.middlewares=agrono-fly-strip"
+      - "traefik.http.middlewares.agrono-fly-strip.stripprefix.prefixes=/agrono-fly"
+      - "traefik.http.services.agrono-fly.loadbalancer.server.port=8000"
+
+networks:
+  edge:
+    external: true

@@ -1,0 +1,60 @@
+# AgroNo Fly: RustFS (armazenamento S3) + API/pagina de voos + worker de mosaico (NodeODM).
+#   cp .env.example .env   (e troque as credenciais)
+#   docker compose up -d --build        -> API em http://localhost:8000, console RustFS em http://localhost:9001
+#
+# Atras do gateway Traefik (prefixo /agrono-fly), sobreponha o arquivo de borda:
+#   docker compose -f docker-compose.yml -f docker-compose.edge.yml up -d --build
+name: agrono-fly
+
+services:
+  agrono-fly-rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${AGRONO_S3_ACCESS_KEY:?defina AGRONO_S3_ACCESS_KEY no .env}
+      RUSTFS_SECRET_KEY: ${AGRONO_S3_SECRET_KEY:?defina AGRONO_S3_SECRET_KEY no .env}
+      RUSTFS_CONSOLE_ENABLE: "true"
+    volumes:
+      - rustfs-data:/data
+    ports:
+      - "${AGRONO_FLY_S3_PORT:-9000}:9000"        # API S3
+      - "${AGRONO_FLY_CONSOLE_PORT:-9001}:9001"   # console web
+
+  agrono-fly-api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - agrono-fly-rustfs
+    environment:
+      # Dentro da rede do compose o endpoint e o nome do servico; o bucket e criado se nao existir.
+      AGRONO_S3_ENDPOINT: ${AGRONO_FLY_S3_ENDPOINT:-http://agrono-fly-rustfs:9000}
+      AGRONO_S3_ACCESS_KEY: ${AGRONO_S3_ACCESS_KEY:?defina AGRONO_S3_ACCESS_KEY no .env}
+      AGRONO_S3_SECRET_KEY: ${AGRONO_S3_SECRET_KEY:?defina AGRONO_S3_SECRET_KEY no .env}
+      AGRONO_S3_BUCKET: ${AGRONO_S3_BUCKET:-agrono-drone}
+    ports:
+      - "${AGRONO_FLY_API_PORT:-8000}:8000"
+
+  # Mosaico: o worker pega voos da fila da API, manda as fotos ao NodeODM (OpenDroneMap) e devolve o resultado.
+  # O NodeODM nao e publicado na rede: so o worker fala com ele. Precisa de bastante RAM (>= 8 GB recomendado) e
+  # algum GB de disco para a imagem.
+  agrono-fly-nodeodm:
+    image: opendronemap/nodeodm:latest
+    restart: unless-stopped
+    volumes:
+      - nodeodm-data:/var/www/data
+
+  agrono-fly-worker:
+    build: .
+    command: ["python", "-u", "worker.py"]
+    restart: unless-stopped
+    depends_on:
+      - agrono-fly-api
+      - agrono-fly-nodeodm
+    environment:
+      AGRONO_API: http://agrono-fly-api:8000
+      NODEODM_URL: http://agrono-fly-nodeodm:3000
+      ODM_ORTHO_RES_CM: ${ODM_ORTHO_RES_CM:-}
+
+volumes:
+  rustfs-data:
+  nodeodm-data:
