@@ -20,11 +20,16 @@
     <application
         android:name=".MapaApp"
         android:allowBackup="false"
-        android:label="Mapa Drone"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:label="AgroNo Fly"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true">
 
         <uses-library
             android:name="com.android.future.usb.accessory"
+            android:required="false" />
+        <!-- O DJI SDK v4 usa org.apache.http, removido do classpath padrao no Android 9+ (VerifyError ao registrar). -->
+        <uses-library
+            android:name="org.apache.http.legacy"
             android:required="false" />
 
         <meta-data
@@ -35,7 +40,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:screenOrientation="portrait"
+            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustPan">
             <intent-filter>

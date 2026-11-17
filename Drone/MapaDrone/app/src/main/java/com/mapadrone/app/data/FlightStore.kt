@@ -26,7 +26,15 @@ data class FlightRecord(
     val partsTotal: Int,
     var partsDone: Int = 0,
     var photosTriggered: Int = 0,
+    /** Indice global (no plano inteiro) do proximo ponto a fotografar; usado para continuar um voo interrompido. */
+    var resumeIndex: Int = 0,
     var notes: String = "",
+    /** Rota planejada (todos os pontos, na ordem) e ponto de decolagem/pouso, para o servidor processar. */
+    var route: List<LatLon> = emptyList(),
+    /** Nome dado pelo usuario a area demarcada (para agrupar e analisar depois). */
+    var areaName: String = "",
+    var home: LatLon? = null,
+    var synced: Boolean = false,
     val log: MutableList<String> = mutableListOf()
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -49,7 +57,12 @@ data class FlightRecord(
         put("partsTotal", partsTotal)
         put("partsDone", partsDone)
         put("photosTriggered", photosTriggered)
+        put("resumeIndex", resumeIndex)
         put("notes", notes)
+        put("route", JSONArray().also { arr -> route.forEach { arr.put(JSONArray().put(it.lat).put(it.lon)) } })
+        home?.let { put("home", JSONObject().put("lat", it.lat).put("lon", it.lon)) }
+        put("synced", synced)
+        put("areaName", areaName)
         put("log", JSONArray(log))
     }
 
@@ -81,7 +94,12 @@ data class FlightRecord(
                 partsTotal = o.optInt("partsTotal"),
                 partsDone = o.optInt("partsDone"),
                 photosTriggered = o.optInt("photosTriggered"),
+                resumeIndex = o.optInt("resumeIndex", 0),
                 notes = o.optString("notes"),
+                route = o.optJSONArray("route")?.let { r -> (0 until r.length()).map { i -> r.getJSONArray(i).let { p -> LatLon(p.getDouble(0), p.getDouble(1)) } } } ?: emptyList(),
+                home = o.optJSONObject("home")?.let { h -> LatLon(h.getDouble("lat"), h.getDouble("lon")) },
+                synced = o.optBoolean("synced", false),
+                areaName = o.optString("areaName", ""),
                 log = (0 until log.length()).map { log.getString(it) }.toMutableList()
             )
         }
@@ -99,7 +117,9 @@ class FlightStore(context: Context) {
         return "%s_%03d".format(day, count + 1)
     }
 
-    fun save(record: FlightRecord) {
+    /** Qualquer alteracao volta o voo para "nao sincronizado"; so o envio ao servidor usa keepSynced. */
+    fun save(record: FlightRecord, keepSynced: Boolean = false) {
+        if (!keepSynced) record.synced = false
         File(dir, "${record.id}.json").writeText(record.toJson().toString(2))
     }
 

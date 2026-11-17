@@ -29,6 +29,8 @@ import dji.sdk.base.BaseComponent
 import dji.sdk.base.BaseProduct
 import dji.sdk.mission.waypoint.WaypointMissionOperator
 import dji.sdk.mission.waypoint.WaypointMissionOperatorListener
+import dji.sdk.media.DownloadListener
+import dji.sdk.media.MediaFile
 import dji.sdk.products.Aircraft
 import dji.sdk.sdkmanager.DJISDKInitEvent
 import dji.sdk.sdkmanager.DJISDKManager
@@ -67,6 +69,7 @@ object DroneManager {
     private var startCallback: ((String?) -> Unit)? = null
     private val photoWaypoints = mutableSetOf<Int>()
     private var partTotal = 0
+    private var partPhotoCount = 0
 
     private fun update(block: (DroneStatus) -> DroneStatus) {
         status = block(status)
@@ -148,6 +151,64 @@ object DroneManager {
         air.gimbal?.rotate(rotation, done { onResult(it) }) ?: onResult("Gimbal indisponivel.")
     }
 
+    // ---- Fotos do cartao SD (download pelo controle) ----
+
+    /**
+     * Poe a camera em modo de download e lista as fotos JPEG do cartao SD, em ordem de horario.
+     * Com a camera nesse modo ela nao fotografa: chame [exitDownloadMode] ao terminar.
+     */
+    fun loadSdPhotos(onResult: (List<MediaFile>?, String?) -> Unit) {
+        val cam = aircraft()?.camera ?: return onResult(null, "Camera indisponivel (drone conectado?).")
+        if (!cam.isMediaDownloadModeSupported) return onResult(null, "Este drone nao permite baixar fotos pelo app.")
+        val mm = cam.mediaManager ?: return onResult(null, "MediaManager indisponivel.")
+        cam.setMode(SettingsDefinitions.CameraMode.MEDIA_DOWNLOAD, done { err ->
+            if (err != null) {
+                main.post { onResult(null, "Modo de download da camera: $err") }
+            } else {
+                mm.refreshFileListOfStorageLocation(SettingsDefinitions.StorageLocation.SDCARD, done { err2 ->
+                    val list = mm.sdCardFileListSnapshot
+                    if (err2 != null || list == null) {
+                        main.post { onResult(null, "Lista do cartao SD: ${err2 ?: "vazia/indisponivel"}") }
+                    } else {
+                        val photos = list.filter { it.mediaType == MediaFile.MediaType.JPEG }.sortedBy { photoTimeMs(it) }
+                        main.post { onResult(photos, null) }
+                    }
+                })
+            }
+        })
+    }
+
+    /** Horario de captura da foto segundo o relogio do drone (interpretado no fuso do tablet). */
+    fun photoTimeMs(f: MediaFile): Long {
+        runCatching {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).parse(f.dateCreated)?.time
+        }.getOrNull()?.let { return it }
+        val t = f.timeCreated
+        return if (t in 1..99_999_999_999L) t * 1000 else t
+    }
+
+    /** Baixa uma foto do cartao para [dir] (mantem o nome original). Chamado fora da thread principal. */
+    fun downloadPhoto(file: MediaFile, dir: java.io.File, onProgress: (Long, Long) -> Unit, onDone: (java.io.File?, String?) -> Unit) {
+        file.fetchFileData(dir, null, object : DownloadListener<String> {
+            override fun onStart() {}
+            override fun onRateUpdate(total: Long, current: Long, persize: Long) {}
+            override fun onRealtimeDataUpdate(data: ByteArray?, position: Long, isLast: Boolean) {}
+            override fun onProgress(total: Long, current: Long) = onProgress(total, current)
+            override fun onSuccess(path: String?) {
+                val f = java.io.File(dir, file.fileName).takeIf { it.exists() } ?: path?.let { java.io.File(it) }?.takeIf { it.exists() }
+                if (f != null) onDone(f, null) else onDone(null, "arquivo baixado nao encontrado")
+            }
+            override fun onFailure(e: DJIError?) = onDone(null, e?.description ?: "falha no download")
+        })
+    }
+
+    /** Volta a camera para o modo foto. */
+    fun exitDownloadMode() {
+        val cam = aircraft()?.camera ?: return
+        cam.mediaManager?.exitMediaDownloading()
+        cam.setMode(SettingsDefinitions.CameraMode.SHOOT_PHOTO, done { if (it != null) log("Camera (voltar ao modo foto): $it") })
+    }
+
     // ---- Missao ----
 
     private val operator: WaypointMissionOperator?
@@ -174,7 +235,7 @@ object DroneManager {
         override fun onExecutionUpdate(event: WaypointMissionExecutionEvent) {
             val p: WaypointExecutionProgress = event.progress ?: return
             if (p.executeState == WaypointMissionExecuteState.FINISHED_ACTION) {
-                photoWaypoints.add(p.targetWaypointIndex)
+                if (p.targetWaypointIndex < partPhotoCount) photoWaypoints.add(p.targetWaypointIndex)
             }
             val photos = photoWaypoints.size
             val index = p.targetWaypointIndex
@@ -210,9 +271,13 @@ object DroneManager {
         val waypoints = part.map { wp ->
             Waypoint(wp.position.lat, wp.position.lon, altitude).also {
                 it.gimbalPitch = -90f
-                // Para, estabiliza e dispara a foto.
-                it.addAction(WaypointAction(WaypointActionType.STAY, 700))
-                it.addAction(WaypointAction(WaypointActionType.START_TAKE_PHOTO, 0))
+                if (wp.photo) {
+                    // Para, estabiliza e dispara a foto.
+                    it.addAction(WaypointAction(WaypointActionType.STAY, 700))
+                    it.addAction(WaypointAction(WaypointActionType.START_TAKE_PHOTO, 0))
+                } else {
+                    it.addAction(WaypointAction(WaypointActionType.STAY, 1000))
+                }
             }
         }
 
@@ -236,6 +301,7 @@ object DroneManager {
 
         photoWaypoints.clear()
         partTotal = part.size
+        partPhotoCount = part.count { it.photo }
         startCallback = onStarted
         pendingStart = true
         op.uploadMission(done { e ->

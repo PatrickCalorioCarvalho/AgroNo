@@ -1,4 +1,4 @@
-# Mapa Drone (MVP)
+# AgroNo Fly (MVP)
 
 App Android para planejar e executar um voo de mapeamento em grade com o DJI Mavic Pro (1a geracao), usando o DJI Mobile SDK v4.
 
