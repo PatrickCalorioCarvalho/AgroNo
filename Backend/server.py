@@ -534,7 +534,7 @@ async function renderMosaico(id, nFotos) {
   const busy = p.status === 'fila' || p.status === 'processando';
   let html = '';
   if (busy) html += `<div class="tag warn">${esc(p.status)}</div> ${esc(p.mensagem || '')} <b>${esc(p.progresso ?? 0)}%</b>`;
-  else if (p.status === 'erro') html += `<div class="tag bad">erro</div> ${esc(p.mensagem || '')}`;
+  else if (p.status === 'erro') html += `<div class="tag bad">erro</div> ${esc(p.mensagem || '')} <a href="${base}/mosaico/odm.log" target="_blank" style="color:var(--accent)">ver log do ODM</a>`;
   else if (p.status === 'concluido') {
     html += `<div class="tag ok">concluído</div> <a href="${base}/mosaico/orthophoto.tif" style="color:var(--accent)">baixar GeoTIFF</a>` +
       ` · <a href="${base}/mosaico/mosaico.jpg" target="_blank" style="color:var(--accent)">abrir imagem</a>` +

@@ -117,22 +117,47 @@ def make_preview(tif_path):
         return None
 
 
+def odm_log(uuid):
+    """Log (console) da tarefa no NodeODM, como texto. Vazio se nao der."""
+    try:
+        r = requests.get(f"{ODM}/task/{uuid}/output", params={"line": 0}, timeout=60)
+        data = r.json()
+        return chr(10).join(data) if isinstance(data, list) else str(data)
+    except Exception:
+        return ""
+
+
+def is_tiff(path):
+    with open(path, "rb") as f:
+        return f.read(4) in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
+
+
 def process(job):
     vid, names = job["id"], job["fotos"]
     log(f"voo {vid}: {len(names)} fotos, qualidade {job.get('qualidade')}")
     tmp = tempfile.mkdtemp(prefix="agrono-")
     uuid = None
+    keep_task = False
     try:
         download_photos(vid, names, tmp)
         uuid = odm_run(vid, tmp, names, job.get("qualidade", "rapido"))
 
         report(vid, "processando", 92, "Baixando o mosaico do NodeODM")
+        # O log do ODM vai sempre para o servidor (<voo>/mosaico/odm.log): e a unica pista se algo der errado.
+        log_text = odm_log(uuid)
+        if log_text:
+            api("PUT", f"/api/voos/{vid}/mosaico/odm.log", data=log_text.encode("utf-8"), timeout=60)
         tif = os.path.join(tmp, "orthophoto.tif")
         with requests.get(f"{ODM}/task/{uuid}/download/orthophoto.tif", stream=True, timeout=300) as r:
             r.raise_for_status()
             with open(tif, "wb") as f:
                 for chunk in r.iter_content(1 << 20):
                     f.write(chunk)
+        if not is_tiff(tif):
+            # O NodeODM responde 200 com {"error": "Invalid asset"} quando o ortomosaico nao existe. Mantem a tarefa para depurar.
+            keep_task = True
+            tail = " | ".join([l for l in log_text.splitlines() if l.strip()][-3:])
+            raise RuntimeError("O NodeODM terminou sem gerar o ortomosaico (veja mosaico/odm.log). " + tail[:300])
 
         report(vid, "processando", 95, "Enviando o mosaico ao servidor")
         preview = make_preview(tif)
@@ -147,7 +172,7 @@ def process(job):
         report(vid, "erro", None, str(e))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-        if uuid:
+        if uuid and not keep_task:
             try:
                 requests.post(f"{ODM}/task/remove", data={"uuid": uuid}, timeout=30)
             except requests.RequestException:
