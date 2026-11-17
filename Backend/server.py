@@ -25,7 +25,8 @@ Rotas:
     GET  /api/voos/<id>/miniaturas/<arquivo> miniatura (404 se nao houver)
 
 Mosaico (processado pelo worker.py com o NodeODM; a fila fica em <voo_id>/processamento.json):
-    POST /api/voos/<id>/processar           pede o mosaico (corpo opcional: {"qualidade": "rapido"|"completo"})
+    POST /api/voos/<id>/processar           pede o mosaico (corpo opcional: {"qualidade": "rapido"|"completo"};
+                                            {"recuperar": true|"<uuid do NodeODM>"} so baixa o resultado de uma tarefa ja pronta)
     GET  /api/voos/<id>/processamento       estado: nenhum | fila | processando | concluido | erro (+ progresso, mensagem)
     POST /api/fila/proximo                  (worker) pega o proximo voo da fila; {"id": null} se nao ha
     POST /api/voos/<id>/processamento       (worker) atualiza estado/progresso
@@ -66,6 +67,7 @@ MAX_MOSAICO = 2 * 1024 * 1024 * 1024
 MIN_FOTOS_MOSAICO = 3
 FILA_STALE_S = 1800  # job "processando" sem sinal do worker por tanto tempo volta para a fila
 FILA_LOCK = threading.Lock()
+UUID_RE = re.compile(r"^[0-9A-Za-z-]{8,64}$")  # id da tarefa no NodeODM
 
 
 # ---------------------------------------------------------------- armazenamento
@@ -331,16 +333,25 @@ class Handler(BaseHTTPRequestHandler):
         qualidade = body.get("qualidade", "rapido")
         if qualidade not in ("rapido", "completo"):
             return self._send(400, {"error": "qualidade deve ser 'rapido' ou 'completo'"})
+        recuperar = body.get("recuperar")
+        uuid = None
+        if recuperar:
+            uuid = recuperar if isinstance(recuperar, str) else self._proc(vid).get("odm_uuid")
+            if not isinstance(uuid, str) or not UUID_RE.match(uuid):
+                return self._send(400, {"error": "nao ha tarefa do NodeODM para recuperar neste voo"})
         n = len(self.storage.list_names(f"{vid}/originais"))
-        if n < MIN_FOTOS_MOSAICO:
+        if n < MIN_FOTOS_MOSAICO and not uuid:
             return self._send(400, {"error": f"so {n} foto(s) no servidor; o mosaico precisa de pelo menos {MIN_FOTOS_MOSAICO}"})
         with FILA_LOCK:
             atual = self._proc(vid)
             ativo = atual.get("status") in ("fila", "processando") and time.time() - atual.get("atualizado", 0) < FILA_STALE_S
             if ativo:
                 return self._send(409, {"error": f"ja esta '{atual['status']}'", "processamento": atual})
-            self._set_proc(vid, {"status": "fila", "qualidade": qualidade, "solicitado": time.time(),
-                                 "progresso": 0, "mensagem": "Na fila"})
+            novo = {"status": "fila", "qualidade": qualidade, "solicitado": time.time(),
+                    "progresso": 0, "mensagem": "Na fila"}
+            if uuid:
+                novo.update({"recuperar_uuid": uuid, "odm_uuid": uuid, "mensagem": "Na fila (recuperar resultado)"})
+            self._set_proc(vid, novo)
         self.log_message("mosaico do voo %s na fila (%s, %s fotos)", vid, qualidade, n)
         self._send(200, {"ok": True, "status": "fila"})
 
@@ -360,7 +371,8 @@ class Handler(BaseHTTPRequestHandler):
             self._set_proc(vid, p)
             fotos = self.storage.list_names(f"{vid}/originais")
         self.log_message("worker pegou o voo %s (%s fotos)", vid, len(fotos))
-        self._send(200, {"id": vid, "qualidade": p.get("qualidade", "rapido"), "fotos": fotos})
+        self._send(200, {"id": vid, "qualidade": p.get("qualidade", "rapido"), "fotos": fotos,
+                         "recuperar_uuid": p.get("recuperar_uuid")})
 
     def _atualizar_proc(self, vid):
         body = self._read_json()
@@ -375,6 +387,8 @@ class Handler(BaseHTTPRequestHandler):
             if "progresso" in body:
                 p["progresso"] = body["progresso"]
             p["mensagem"] = str(body.get("mensagem", ""))[:500]
+            if isinstance(body.get("odm_uuid"), str) and UUID_RE.match(body["odm_uuid"]):
+                p["odm_uuid"] = body["odm_uuid"]
             self._set_proc(vid, p)
         self._send(200, {"ok": True})
 
@@ -534,7 +548,10 @@ async function renderMosaico(id, nFotos) {
   const busy = p.status === 'fila' || p.status === 'processando';
   let html = '';
   if (busy) html += `<div class="tag warn">${esc(p.status)}</div> ${esc(p.mensagem || '')} <b>${esc(p.progresso ?? 0)}%</b>`;
-  else if (p.status === 'erro') html += `<div class="tag bad">erro</div> ${esc(p.mensagem || '')} <a href="${base}/mosaico/odm.log" target="_blank" style="color:var(--accent)">ver log do ODM</a>`;
+  else if (p.status === 'erro') {
+    html += `<div class="tag bad">erro</div> ${esc(p.mensagem || '')} <a href="${base}/mosaico/odm.log" target="_blank" style="color:var(--accent)">ver log do ODM</a>`;
+    if (p.odm_uuid) html += `<div style="margin-top:8px"><button class="voo" id="btnRec" style="width:auto">Recuperar resultado (sem reprocessar)</button></div>`;
+  }
   else if (p.status === 'concluido') {
     html += `<div class="tag ok">concluído</div> <a href="${base}/mosaico/orthophoto.tif" style="color:var(--accent)">baixar GeoTIFF</a>` +
       ` · <a href="${base}/mosaico/mosaico.jpg" target="_blank" style="color:var(--accent)">abrir imagem</a>` +
@@ -548,6 +565,14 @@ async function renderMosaico(id, nFotos) {
       `${nFotos < 3 ? ' <small style="color:var(--dim)">precisa de pelo menos 3 fotos no servidor</small>' : ''}</div>`;
   }
   el.innerHTML = html;
+  const rec = $('#btnRec');
+  if (rec) rec.onclick = async () => {
+    rec.disabled = true;
+    const r = await fetch(`${base}/processar`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recuperar: true }) });
+    if (!r.ok) alert((await r.json().catch(() => ({}))).error || 'Falha ao pedir a recuperacao');
+    renderMosaico(id, nFotos);
+  };
   const b = $('#btnMos');
   if (b) b.onclick = async () => {
     b.disabled = true;

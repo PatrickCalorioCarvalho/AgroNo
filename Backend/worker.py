@@ -21,6 +21,7 @@ import os
 import shutil
 import tempfile
 import time
+import zipfile
 from urllib.parse import quote
 
 import requests
@@ -50,8 +51,10 @@ def api(method, path, **kw):
     return requests.request(method, API + path, **kw)
 
 
-def report(vid, status, progresso=None, mensagem=""):
+def report(vid, status, progresso=None, mensagem="", odm_uuid=None):
     body = {"status": status, "mensagem": mensagem}
+    if odm_uuid:
+        body["odm_uuid"] = odm_uuid
     if progresso is not None:
         body["progresso"] = int(progresso)
     try:
@@ -84,6 +87,7 @@ def odm_run(vid, folder, names, qualidade):
     r = requests.post(f"{ODM}/task/new/init", data={"name": vid, "options": json.dumps(odm_options(qualidade))}, timeout=60)
     r.raise_for_status()
     uuid = r.json()["uuid"]
+    report(vid, "processando", 10, "Enviando fotos ao NodeODM", odm_uuid=uuid)  # guarda o id: permite recuperar o resultado depois
     for i, name in enumerate(names):
         with open(os.path.join(folder, name), "rb") as f:
             requests.post(f"{ODM}/task/new/upload/{uuid}", files={"images": (name, f)}, timeout=300).raise_for_status()
@@ -132,6 +136,43 @@ def is_tiff(path):
         return f.read(4) in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
 
 
+def _download(url, dest):
+    with requests.get(url, stream=True, timeout=300) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(1 << 20):
+                f.write(chunk)
+
+
+def fetch_orthophoto(uuid, dest):
+    """Baixa o ortomosaico do NodeODM. Tenta os nomes de asset conhecidos e, por fim, extrai do all.zip.
+
+    O NodeODM responde 200 com {"error": "Invalid asset"} para um nome que nao reconhece, entao cada
+    tentativa e validada pelo cabecalho TIFF.
+    """
+    for asset in ("orthophoto.tif", "odm_orthophoto/odm_orthophoto.tif"):
+        _download(f"{ODM}/task/{uuid}/download/{asset}", dest)
+        if is_tiff(dest):
+            log(f"ortomosaico baixado como asset '{asset}'")
+            return True
+        with open(dest, "rb") as f:
+            log(f"asset '{asset}' recusado: {f.read(120)!r}")
+    zpath = dest + ".zip"
+    _download(f"{ODM}/task/{uuid}/download/all.zip", zpath)
+    try:
+        with zipfile.ZipFile(zpath) as z:
+            alvo = [n for n in z.namelist() if n.replace(chr(92), "/").endswith("odm_orthophoto/odm_orthophoto.tif")]
+            if not alvo:
+                log("all.zip sem odm_orthophoto.tif; conteudo: " + ", ".join(z.namelist()[:30]))
+                return False
+            with z.open(alvo[0]) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+        log("ortomosaico extraido do all.zip")
+        return is_tiff(dest)
+    finally:
+        os.path.exists(zpath) and os.remove(zpath)
+
+
 def process(job):
     vid, names = job["id"], job["fotos"]
     log(f"voo {vid}: {len(names)} fotos, qualidade {job.get('qualidade')}")
@@ -139,8 +180,17 @@ def process(job):
     uuid = None
     keep_task = False
     try:
-        download_photos(vid, names, tmp)
-        uuid = odm_run(vid, tmp, names, job.get("qualidade", "rapido"))
+        if job.get("recuperar_uuid"):
+            # So baixa o resultado de uma tarefa que ja terminou no NodeODM (sem reprocessar).
+            uuid = job["recuperar_uuid"]
+            report(vid, "processando", 90, "Recuperando o resultado da tarefa do NodeODM", odm_uuid=uuid)
+            info = requests.get(f"{ODM}/task/{uuid}/info", timeout=60)
+            if info.status_code != 200 or info.json().get("status", {}).get("code") != ODM_COMPLETED:
+                keep_task = True
+                raise RuntimeError(f"A tarefa {uuid} nao existe mais ou nao terminou no NodeODM; gere o mosaico de novo.")
+        else:
+            download_photos(vid, names, tmp)
+            uuid = odm_run(vid, tmp, names, job.get("qualidade", "rapido"))
 
         report(vid, "processando", 92, "Baixando o mosaico do NodeODM")
         # O log do ODM vai sempre para o servidor (<voo>/mosaico/odm.log): e a unica pista se algo der errado.
@@ -148,12 +198,7 @@ def process(job):
         if log_text:
             api("PUT", f"/api/voos/{vid}/mosaico/odm.log", data=log_text.encode("utf-8"), timeout=60)
         tif = os.path.join(tmp, "orthophoto.tif")
-        with requests.get(f"{ODM}/task/{uuid}/download/orthophoto.tif", stream=True, timeout=300) as r:
-            r.raise_for_status()
-            with open(tif, "wb") as f:
-                for chunk in r.iter_content(1 << 20):
-                    f.write(chunk)
-        if not is_tiff(tif):
+        if not fetch_orthophoto(uuid, tif):
             # O NodeODM responde 200 com {"error": "Invalid asset"} quando o ortomosaico nao existe. Mantem a tarefa para depurar.
             keep_task = True
             tail = " | ".join([l for l in log_text.splitlines() if l.strip()][-3:])
