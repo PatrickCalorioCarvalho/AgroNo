@@ -296,9 +296,26 @@ object DroneManager {
             .waypointCount(waypoints.size)
             .build()
 
-        val loadError = op.loadMission(mission)
+        var loadError = op.loadMission(mission)
+        if (loadError != null && loadError.description.contains("gimbal", ignoreCase = true)) {
+            // Logo depois de ligar, o gimbal ainda esta inicializando e o SDK recusa o angulo (-90 e valido).
+            // Aponta a camera para baixo, espera um pouco e tenta de novo uma vez.
+            prepareCamera { }
+            main.postDelayed({
+                val retry = op.loadMission(mission)
+                if (retry != null) {
+                    onStarted("Missao invalida: ${retry.description}. O gimbal ainda deve estar inicializando: espere ele parar de se mexer e tente de novo.")
+                } else {
+                    uploadPart(op, part, onStarted)
+                }
+            }, 2500)
+            return
+        }
         if (loadError != null) return onStarted("Missao invalida: ${loadError.description}")
+        uploadPart(op, part, onStarted)
+    }
 
+    private fun uploadPart(op: WaypointMissionOperator, part: List<PlanWaypoint>, onStarted: (String?) -> Unit) {
         photoWaypoints.clear()
         partTotal = part.size
         partPhotoCount = part.count { it.photo }
