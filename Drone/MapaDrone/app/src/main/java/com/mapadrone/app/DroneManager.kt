@@ -256,6 +256,7 @@ object DroneManager {
     private fun finishStart(error: String?) {
         val cb = startCallback
         startCallback = null
+        if (error != null) com.mapadrone.app.data.AppLog.log("DJI: falha ao iniciar a missao: $error")
         main.post { cb?.invoke(error) }
     }
 
@@ -297,7 +298,8 @@ object DroneManager {
             .build()
 
         var loadError = op.loadMission(mission)
-        if (loadError != null && loadError.description.contains("gimbal", ignoreCase = true)) {
+        if (loadError != null) com.mapadrone.app.data.AppLog.log("DJI: loadMission recusou (${part.size} pontos, ${params.altitudeM} m): ${loadError.description}")
+        if (loadError != null &&loadError.description.contains("gimbal", ignoreCase = true)) {
             // Logo depois de ligar, o gimbal ainda esta inicializando e o SDK recusa o angulo (-90 e valido).
             // Aponta a camera para baixo, espera um pouco e tenta de novo uma vez.
             prepareCamera { }

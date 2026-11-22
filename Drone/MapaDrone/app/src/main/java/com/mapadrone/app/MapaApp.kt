@@ -6,6 +6,11 @@ import androidx.multidex.MultiDex
 import com.cySdkyc.clx.Helper
 
 class MapaApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        com.mapadrone.app.data.AppLog.init(this)
+    }
+
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
         MultiDex.install(this)

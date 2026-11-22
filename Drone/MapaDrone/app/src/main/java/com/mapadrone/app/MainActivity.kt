@@ -31,6 +31,7 @@ import com.mapadrone.app.core.LatLon
 import com.mapadrone.app.core.Plan
 import com.mapadrone.app.core.PlanParams
 import com.mapadrone.app.core.PlanWaypoint
+import com.mapadrone.app.data.AppLog
 import com.mapadrone.app.data.FlightRecord
 import com.mapadrone.app.data.FlightStore
 import com.mapadrone.app.data.PlanStore
@@ -254,10 +255,21 @@ class MainActivity : Activity(), DroneListener {
         for (id in intArrayOf(R.id.btnMark, R.id.btnUndo, R.id.btnPlan)) findViewById<View>(id).visibility = if (hasPlan) View.GONE else View.VISIBLE
     }
 
+    /** Envia ao servidor as linhas novas do log do app (e os erros do logcat), para consultar na pagina. */
+    private fun uploadLogs(url: String, manual: Boolean) {
+        Thread {
+            val (text, offset) = AppLog.pending() ?: return@Thread
+            val err = SyncClient.putLog(url, AppLog.uploadName(), text + "\n--- logcat (erros do app) ---\n" + AppLog.logcatErrors())
+            if (err == null) AppLog.markSent(offset)
+            if (manual) runOnUiThread { toast(if (err == null) "Log do app enviado." else "Falha ao enviar o log: $err") }
+        }.start()
+    }
+
     /** Envia ao servidor os voos ainda nao sincronizados (rota + registro). Sem URL configurada, nao faz nada. */
     private fun syncPending(manual: Boolean = false) {
         val url = serverUrl
         if (url.isBlank()) { if (manual) toast("Defina o servidor em Config."); return }
+        uploadLogs(url, manual)
         val active = if (missionRunning) record?.id else null
         val pending = store.list().filter { !it.synced && it.id != active }
         if (pending.isEmpty()) { if (manual) toast("Todos os voos ja estao sincronizados."); return }
@@ -688,6 +700,7 @@ class MainActivity : Activity(), DroneListener {
     }
 
     private fun addLog(msg: String) {
+        AppLog.log("[${record?.id ?: "-"}] $msg")
         record?.let {
             it.log += "${FlightRecord.format(System.currentTimeMillis())} $msg"
             store.save(it)

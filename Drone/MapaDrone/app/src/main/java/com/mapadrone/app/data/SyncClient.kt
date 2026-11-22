@@ -56,5 +56,21 @@ object SyncClient {
         e.message ?: e.javaClass.simpleName
     }
 
+    /** Envia um trecho do log do app (texto) para o servidor guardar em _logs/<name>. */
+    fun putLog(baseUrl: String, name: String, text: String): String? = try {
+        val conn = URL(base(baseUrl) + "/api/logs/" + enc(name)).openConnection() as HttpURLConnection
+        conn.requestMethod = "PUT"
+        conn.connectTimeout = 5000
+        conn.readTimeout = 15000
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "text/plain; charset=utf-8")
+        conn.outputStream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+        val code = conn.responseCode
+        conn.disconnect()
+        if (code in 200..299) null else "HTTP $code"
+    } catch (e: Exception) {
+        e.message ?: e.javaClass.simpleName
+    }
+
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 }

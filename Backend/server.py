@@ -255,6 +255,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_bytes(200, INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
         if parts == ["health"]:
             return self._send(200, {"ok": True, "storage": st.kind})
+        if parts == ["api", "logs"]:
+            return self._send(200, st.list_names("_logs"))
+        if len(parts) == 3 and parts[:2] == ["api", "logs"] and FILE_RE.match(parts[2]):
+            data = st.get(f"_logs/{parts[2]}")
+            if data is None:
+                return self._send(404, {"error": "nao encontrado"})
+            return self._send_bytes(200, data, "text/plain; charset=utf-8", "no-cache")
         if parts == ["api", "voos"]:
             flights = []
             for vid in st.list_voos():
@@ -394,6 +401,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         parts = self.path.split("?")[0].strip("/").split("/")
+        if len(parts) == 3 and parts[:2] == ["api", "logs"] and FILE_RE.match(parts[2]):
+            raw = self._read_body(MAX_JSON)  # log do app (texto), enviado a cada sincronizacao
+            if raw is None:
+                return self._send(400, {"error": "corpo vazio ou grande demais"})
+            self.storage.put(f"_logs/{parts[2]}", raw, "text/plain; charset=utf-8")
+            return self._send(200, {"ok": True})
         if len(parts) == 5 and parts[:2] == ["api", "voos"] and parts[3] == "mosaico" \
                 and ID_RE.match(parts[2]) and FILE_RE.match(parts[4]):
             vid, name = parts[2], parts[4]
@@ -470,6 +483,7 @@ INDEX_HTML = r"""<!doctype html>
 <aside>
   <h1>AgroNo Fly</h1>
   <button class="voo" id="btnSim" style="border-color:var(--accent);text-align:center"><b>Simulador de malha</b><small>altura, pontos e tempo</small></button>
+  <button class="voo" id="btnLogs" style="text-align:center"><b>Logs do app</b><small>erros e exceções do tablet</small></button>
   <div id="list"><div class="empty">Carregando…</div></div>
 </aside>
 <main id="main"><div class="empty">Escolha um voo na lista.</div></main>
@@ -728,6 +742,36 @@ function openSim(init) {
   drawCorners(); recompute();
 }
 $('#btnSim').onclick = () => openSim();
+
+// ------------------------------------------------------------ logs do app (enviados pelo tablet a cada sincronizacao)
+const LOGS = API.replace(/voos$/, 'logs');
+async function openLogs() {
+  selected = null; loadList(); clearTimeout(mosTimer);
+  const names = await fetch(LOGS).then((r) => r.json()).catch(() => []);
+  // mais novo primeiro: o nome termina em _AAAAMMDD-HHMMSS.log
+  names.sort((a, b) => b.split('_').pop().localeCompare(a.split('_').pop()));
+  $('#main').innerHTML = `<h1>Logs do app</h1>
+    <div class="empty" style="padding:0 0 8px">Cada sincronização do tablet envia as linhas novas do log (eventos, erros, travamentos) e os erros do logcat.</div>
+    <div class="ctl" style="grid-template-columns:2fr 1fr 1fr"><div><label>Arquivo<select id="lgSel" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px">
+      ${names.map((n) => `<option>${esc(n)}</option>`).join('') || '<option value="">(nenhum log recebido ainda)</option>'}</select></label></div>
+      <div><label>Filtrar<input type="search" id="lgQ" placeholder="ex.: gimbal" style="width:100%;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px"></label></div>
+      <div><label><br><input type="checkbox" id="lgErr"> só erros</label></div></div>
+    <pre id="lgText" style="max-height:70vh"></pre>`;
+  let text = '';
+  const show = () => {
+    const q = $('#lgQ').value.toLowerCase(), onlyErr = $('#lgErr').checked;
+    const lines = text.split('\n').filter((l) => (!q || l.toLowerCase().includes(q)) && (!onlyErr || /erro|error|exception|crash|fatal|falha|recus/i.test(l)));
+    $('#lgText').textContent = lines.join('\n') || '(nada)';
+  };
+  const load = async () => {
+    const n = $('#lgSel').value;
+    text = n ? await fetch(`${LOGS}/${encodeURIComponent(n)}`).then((r) => r.text()).catch(() => '') : '';
+    show();
+  };
+  $('#lgSel').onchange = load; $('#lgQ').oninput = show; $('#lgErr').onchange = show;
+  load();
+}
+$('#btnLogs').onclick = openLogs;
 
 let mosTimer = null;
 async function renderMosaico(id, nFotos) {
