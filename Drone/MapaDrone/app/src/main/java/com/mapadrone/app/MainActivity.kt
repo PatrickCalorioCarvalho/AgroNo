@@ -33,6 +33,8 @@ import com.mapadrone.app.core.PlanParams
 import com.mapadrone.app.core.PlanWaypoint
 import com.mapadrone.app.data.FlightRecord
 import com.mapadrone.app.data.FlightStore
+import com.mapadrone.app.data.PlanStore
+import com.mapadrone.app.data.SavedPlan
 import com.mapadrone.app.data.SyncClient
 import dji.sdk.camera.VideoFeeder
 import dji.sdk.codec.DJICodecManager
@@ -56,6 +58,7 @@ class MainActivity : Activity(), DroneListener {
     private lateinit var tvStatus: TextView
     private lateinit var tvPlan: TextView
     private lateinit var store: FlightStore
+    private val planStore by lazy { PlanStore(this) }
     private val photoTransfer by lazy { PhotoTransfer(this, store) { serverUrl } }
 
     private val corners = mutableListOf<LatLon>()
@@ -164,9 +167,13 @@ class MainActivity : Activity(), DroneListener {
                 menu.add(0, 4, 3, "Continuar voo anterior")
                 menu.add(0, 5, 4, "Sincronizar voos com o servidor")
                 menu.add(0, 6, 5, "Enviar fotos do voo (pelo drone)")
+                menu.add(0, 7, 6, "Salvar plano atual")
+                menu.add(0, 8, 7, "Planos salvos (repetir voo)")
                 setOnMenuItemClickListener {
                     if (it.itemId == 1) DroneManager.prepareCamera { err -> runOnUiThread { toast(err?.let { e -> "Gimbal/camera: $e" } ?: "Camera apontada para baixo.") } }
                     else if (it.itemId == 4) resumePrevious()
+                    else if (it.itemId == 7) saveCurrentPlan()
+                    else if (it.itemId == 8) showSavedPlans()
                     else if (it.itemId == 5) syncPending(manual = true)
                     else if (it.itemId == 6) photoTransfer.start(
                         if (missionRunning) "Pare a missao antes de baixar as fotos."
@@ -302,6 +309,62 @@ class MainActivity : Activity(), DroneListener {
     }
 
     /** Define o ponto H (decolagem e pouso): posicao do drone se tiver GPS, senao a do tablet, senao o centro do mapa. */
+    /** Salva area, ponto H e parametros com um nome, para repetir o mesmo voo depois. */
+    private fun saveCurrentPlan() {
+        if (corners.size < 3) return toast("Marque a area (3 cantos ou mais) antes de salvar o plano.")
+        val input = EditText(this).apply {
+            setText(areaName)
+            hint = "ex.: Talhao 3 - Soja"
+            setSelection(text.length)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Salvar plano")
+            .setMessage("Nome do plano. Se ja existir um com esse nome, ele e substituido.")
+            .setView(input)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Salvar") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isEmpty()) return@setPositiveButton toast("De um nome ao plano.")
+                val prm = plan?.params ?: params
+                planStore.save(SavedPlan(name, corners.toList(), home, prm.altitudeM, prm.frontOverlap, prm.sideOverlap, prm.speedMs, prm.endMarginM))
+                areaName = name
+                toast("Plano \"$name\" salvo.")
+            }
+            .show()
+    }
+
+    /** Lista os planos salvos; tocar carrega e gera o plano, segurar apaga. */
+    private fun showSavedPlans() {
+        if (missionRunning) return toast("Pare a missao atual primeiro.")
+        val plans = planStore.list()
+        if (plans.isEmpty()) return toast("Nenhum plano salvo. Marque a area e use Mais > Salvar plano atual.")
+        val fmt = { sp: SavedPlan -> "${sp.name}\n${sp.corners.size} cantos | %.0f m | ${if (sp.home != null) "com H" else "sem H"}".format(sp.altitudeM) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Planos salvos (segure para apagar)")
+            .setAdapter(ArrayAdapter(this, android.R.layout.simple_list_item_1, plans.map(fmt))) { _, i -> loadSavedPlan(plans[i]) }
+            .setPositiveButton("Fechar", null)
+            .create()
+        dialog.show()
+        dialog.listView.setOnItemLongClickListener { _, _, i, _ ->
+            AlertDialog.Builder(this)
+                .setTitle("Apagar \"${plans[i].name}\"?")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Apagar") { _, _ -> planStore.delete(plans[i].name); dialog.dismiss(); toast("Plano apagado.") }
+                .show()
+            true
+        }
+    }
+
+    private fun loadSavedPlan(sp: SavedPlan) {
+        corners.clear(); corners.addAll(sp.corners)
+        home = sp.home
+        params = PlanParams(sp.altitudeM, sp.frontOverlap, sp.sideOverlap, sp.speedMs, sp.endMarginM)
+        areaName = sp.name
+        resumeNote = "Plano salvo: ${sp.name}"
+        generatePlan()
+        toast("Plano \"${sp.name}\" carregado. Posicione o drone no ponto H, decole e toque em Iniciar missao.")
+    }
+
     private fun setHome() {
         if (missionRunning) return toast("Pare a missao antes de mudar o ponto H.")
         val s = DroneManager.status
@@ -412,6 +475,7 @@ class MainActivity : Activity(), DroneListener {
 
     private fun invalidatePlan() {
         plan = null
+        resumeNote = ""
         nextPart = 0
         tvPlan.text = if (corners.isEmpty()) {
             "Marque os cantos da area (botao ou toque longo no mapa) e gere o plano."
