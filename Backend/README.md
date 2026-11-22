@@ -47,7 +47,9 @@ Publica a API em `/agrono-fly` (stripprefix) pela rede externa `edge`. O compose
 
 ## Rotas
 
-`GET /` · `GET /health` · `GET|POST /api/voos` · `GET /api/voos/<id>` · `GET /api/voos/<id>/fotos` · `PUT|GET /api/voos/<id>/fotos/<arquivo>` · `GET /api/voos/<id>/miniaturas/<arquivo>`
+`GET /` · `GET /health` · `GET|POST /api/voos` · `GET /api/voos/<id>` · `GET /api/voos/<id>/fotos` · `PUT|GET /api/voos/<id>/fotos/<arquivo>` · `GET /api/voos/<id>/miniaturas/<arquivo>` · `DELETE /api/voos/<id>` (so voo vazio) · `DELETE /api/voos/<id>/fotos/<arquivo>` · `PUT|GET /api/logs/<arquivo>` · `GET /api/logs`
+
+Fotos de outro voo que entraram por engano saem com `python apagar_fotos.py <voo_id> [--manter N] [--apagar] --server <url>` (mantem as ultimas N, que e o numero de disparos do voo; sem `--apagar` so mostra).
 
 ## Fluxo
 

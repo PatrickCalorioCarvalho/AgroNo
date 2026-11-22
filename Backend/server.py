@@ -102,6 +102,11 @@ class DiskStorage:
         d = self._path(prefix)
         return sorted(f.name for f in d.iterdir() if f.is_file()) if d.is_dir() else []
 
+    def delete(self, key):
+        p = self._path(key)
+        if p.is_file():
+            p.unlink()
+
     def delete_prefix(self, prefix):
         p = self._path(prefix.rstrip("/"))
         if p.is_dir():
@@ -177,6 +182,9 @@ class S3Storage:
         for resp in self._list(prefix.rstrip("/") + "/"):
             names += [o["Key"].rsplit("/", 1)[-1] for o in resp.get("Contents", []) if not o["Key"].endswith("/")]
         return sorted(names)
+
+    def delete(self, key):
+        self.s3.delete_object(Bucket=self.bucket, Key=key)
 
     def delete_prefix(self, prefix):
         prefix = prefix.rstrip("/") + "/"
@@ -425,6 +433,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, {"error": "o voo esta na fila de mosaico"})
             st.delete_prefix(vid)
             self.log_message("voo vazio %s excluido", vid)
+            return self._send(200, {"ok": True})
+        # Apaga uma foto do voo (original e miniatura): para tirar fotos que vieram de outro voo.
+        if len(parts) == 5 and parts[:2] == ["api", "voos"] and parts[3] == "fotos"                 and ID_RE.match(parts[2]) and FILE_RE.match(parts[4]):
+            vid, name, st = parts[2], parts[4], self.storage
+            if self._voo(vid) is None:
+                return self._send(404, {"error": "nao encontrado"})
+            if self._proc(vid).get("status") in ("fila", "processando"):
+                return self._send(409, {"error": "o voo esta na fila de mosaico"})
+            if name not in st.list_names(f"{vid}/originais"):
+                return self._send(404, {"error": "foto nao encontrada"})
+            st.delete(f"{vid}/originais/{name}")
+            st.delete(f"{vid}/miniaturas/{name}.jpg")
+            self.log_message("foto %s do voo %s excluida", name, vid)
             return self._send(200, {"ok": True})
         self._send(404, {"error": "nao encontrado"})
 
