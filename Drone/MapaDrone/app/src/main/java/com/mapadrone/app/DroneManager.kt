@@ -213,6 +213,22 @@ object DroneManager {
         })
     }
 
+    /** Apaga fotos do cartao SD (a camera precisa estar em modo de download). Devolve quantas foram apagadas. */
+    fun deleteSdFiles(files: List<MediaFile>, onResult: (Int, String?) -> Unit) {
+        val mm = aircraft()?.camera?.mediaManager ?: return onResult(0, "MediaManager indisponivel.")
+        mm.deleteFiles(files, object : CommonCallbacks.CompletionCallbackWithTwoParam<List<MediaFile>, dji.common.error.DJICameraError> {
+            override fun onSuccess(deleted: List<MediaFile>?, failed: dji.common.error.DJICameraError?) {
+                com.mapadrone.app.data.AppLog.log("DJI: ${deleted?.size ?: 0} foto(s) apagada(s) do cartao SD (erro: ${failed?.description ?: "nenhum"})")
+                main.post { onResult(deleted?.size ?: 0, failed?.description) }
+            }
+
+            override fun onFailure(error: DJIError?) {
+                com.mapadrone.app.data.AppLog.log("DJI: falha ao apagar fotos do cartao SD: ${error?.description}")
+                main.post { onResult(0, error?.description ?: "falha ao apagar") }
+            }
+        })
+    }
+
     /** Volta a camera para o modo foto. */
     fun exitDownloadMode() {
         val cam = aircraft()?.camera ?: return

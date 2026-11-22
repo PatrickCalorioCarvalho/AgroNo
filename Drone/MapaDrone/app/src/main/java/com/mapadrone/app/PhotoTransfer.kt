@@ -121,6 +121,7 @@ class PhotoTransfer(
         exec.execute {
             val url = serverUrl()
             var sent = 0; var skipped = 0; var failed = 0; var consecutive = 0
+            val onServer = mutableListOf<MediaFile>() // enviadas agora ou que ja estavam no servidor
             var abort: String? = null
             val dir = File(act.cacheDir, "fotos").apply { mkdirs() }
 
@@ -134,7 +135,7 @@ class PhotoTransfer(
                     if (cancelled) break
                     val name = f.fileName
                     val head = "Foto ${i + 1}/${files.size}: $name\nEnviadas: $sent  Ja no servidor: $skipped  Falhas: $failed"
-                    if (name in have) { skipped++; continue }
+                    if (name in have) { skipped++; onServer += f; continue }
 
                     ui("$head\nBaixando do drone...")
                     var local: File? = null
@@ -152,7 +153,7 @@ class PhotoTransfer(
                         err = SyncClient.putPhoto(url, rec.id, name, file)
                     }
                     file?.delete()
-                    if (err == null) { sent++; consecutive = 0 }
+                    if (err == null) { sent++; consecutive = 0; onServer += f }
                     else {
                         failed++; consecutive++
                         if (consecutive >= 3) { abort = "3 falhas seguidas (ultima: $err). Confira a conexao com o drone e com o servidor."; break }
@@ -160,7 +161,9 @@ class PhotoTransfer(
                 }
             }
 
-            DroneManager.exitDownloadMode()
+            // Confere de novo no servidor: so entra na lista de apagar o que ele realmente tem.
+            val nowOnServer = SyncClient.listPhotos(url, rec.id)
+            val deletable = if (nowOnServer == null) emptyList() else onServer.filter { it.fileName in nowOnServer }
             val summary = buildString {
                 append("Enviadas: $sent\nJa estavam no servidor: $skipped\nFalhas: $failed")
                 if (cancelled) append("\n\nInterrompido por voce. Repita para continuar de onde parou.")
@@ -169,8 +172,36 @@ class PhotoTransfer(
             act.runOnUiThread {
                 running = false
                 dialog.dismiss()
-                AlertDialog.Builder(act).setTitle("Fotos de ${rec.id}").setMessage(summary).setPositiveButton("OK", null).show()
+                val b = AlertDialog.Builder(act).setTitle("Fotos de ${rec.id}")
+                if (deletable.isEmpty()) {
+                    DroneManager.exitDownloadMode()
+                    b.setMessage(summary).setPositiveButton("OK", null).show()
+                } else {
+                    b.setMessage(summary + "\n\n${deletable.size} foto(s) ja estao no servidor. Apagar do cartao SD do drone para liberar espaco?")
+                        .setPositiveButton("Apagar do cartao (${deletable.size})") { _, _ -> confirmDelete(rec, deletable) }
+                        .setNegativeButton("Manter no cartao") { _, _ -> DroneManager.exitDownloadMode() }
+                        .setOnCancelListener { DroneManager.exitDownloadMode() }
+                        .show()
+                }
             }
         }
+    }
+
+    /** Segunda confirmacao antes de apagar: nao da para desfazer. */
+    private fun confirmDelete(rec: FlightRecord, files: List<MediaFile>) {
+        AlertDialog.Builder(act)
+            .setTitle("Apagar ${files.size} foto(s) do cartao?")
+            .setMessage("Elas ficam so no servidor (voo ${rec.id}). Isso nao pode ser desfeito.")
+            .setPositiveButton("Apagar") { _, _ ->
+                DroneManager.deleteSdFiles(files) { n, err ->
+                    DroneManager.exitDownloadMode()
+                    AlertDialog.Builder(act).setTitle("Cartao SD")
+                        .setMessage(if (err == null) "$n foto(s) apagada(s) do cartao." else "Apagadas: $n\nErro: $err")
+                        .setPositiveButton("OK", null).show()
+                }
+            }
+            .setNegativeButton("Cancelar") { _, _ -> DroneManager.exitDownloadMode() }
+            .setOnCancelListener { DroneManager.exitDownloadMode() }
+            .show()
     }
 }
