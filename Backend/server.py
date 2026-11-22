@@ -454,6 +454,14 @@ INDEX_HTML = r"""<!doctype html>
   .gal img { width:100%; height:100%; object-fit:cover; display:block; }
   pre { background:var(--card); padding:10px; border-radius:10px; overflow:auto; max-height:220px; white-space:pre-wrap; }
   .empty { color:var(--dim); padding:30px 0; }
+  .ctl { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; margin:10px 0; }
+  .ctl label { display:block; color:var(--dim); font-size:12px; }
+  .ctl input[type=number] { width:100%; background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px; font:inherit; }
+  .btn { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; font:inherit; margin-right:6px; }
+  .btn:hover { border-color:var(--accent); }
+  table.alt { border-collapse:collapse; width:100%; max-width:560px; } table.alt td, table.alt th { padding:5px 10px; text-align:right; border-bottom:1px solid var(--line); }
+  table.alt tr.cur { background:#1b4d2b; } table.alt tbody tr { cursor:pointer; } table.alt th { color:var(--dim); font-weight:600; }
+  .cn { background:#2ea043; color:#fff; font-weight:700; border:2px solid #fff; border-radius:50%; text-align:center; line-height:20px; font-size:11px; }
   .hicon { background:#0d47a1; color:#fff; font-weight:700; border:2px solid #fff; border-radius:50%; text-align:center; line-height:24px; }
   @media (max-width:800px){ body{flex-direction:column;height:auto} aside{width:auto;max-height:40vh} }
 </style>
@@ -461,6 +469,7 @@ INDEX_HTML = r"""<!doctype html>
 <body>
 <aside>
   <h1>AgroNo Fly</h1>
+  <button class="voo" id="btnSim" style="border-color:var(--accent);text-align:center"><b>Simulador de malha</b><small>altura, pontos e tempo</small></button>
   <div id="list"><div class="empty">Carregando…</div></div>
 </aside>
 <main id="main"><div class="empty">Escolha um voo na lista.</div></main>
@@ -512,7 +521,8 @@ async function openVoo(id) {
   ]);
   const pct = (x) => (x == null ? '—' : Math.round(x * 100) + '%');
   $('#main').innerHTML = `
-    <h1>${esc(v.areaName || 'Sem nome')} · ${esc(v.id)} <span class="tag ${statusClass(v.status)}">${esc(v.status)}</span></h1>
+    <h1>${esc(v.areaName || 'Sem nome')} · ${esc(v.id)} <span class="tag ${statusClass(v.status)}">${esc(v.status)}</span>
+      ${(v.corners || []).length >= 3 ? '<button class="btn" id="btnSimVoo" style="margin-left:10px">Simular esta área</button>' : ''}</h1>
     <div id="map"></div>
     <h2>Mosaico</h2><div id="mos"></div>
     <h2>Parâmetros</h2>
@@ -536,7 +546,188 @@ async function openVoo(id) {
   });
   drawMap(v);
   renderMosaico(id, fotos.length);
+  const bs = $('#btnSimVoo');
+  if (bs) bs.onclick = () => openSim({ corners: v.corners.map((c) => ({ lat: c.lat, lon: c.lon })),
+    alt: v.altitudeM, front: v.frontOverlap, side: v.sideOverlap, speed: v.speedMs });
 }
+
+// ------------------------------------------------------------ simulador de malha
+// Mesma logica do GridPlanner.kt do app (serpentina recortada pelo poligono, camera do Mavic Pro).
+const CAM = { sw: 6.17, sh: 4.55, f: 4.73, w: 4000 };
+
+function simPlan(corners, p) {
+  const bad = p.alt < 3 || p.alt > 50 ? 'Altura deve ficar entre 3 e 50 m.'
+    : p.front < 0.5 || p.front > 0.9 ? 'Sobreposição frontal deve ficar entre 50% e 90%.'
+    : p.side < 0.5 || p.side > 0.9 ? 'Sobreposição lateral deve ficar entre 50% e 90%.'
+    : p.speed < 0.5 || p.speed > 5 ? 'Velocidade deve ficar entre 0,5 e 5 m/s.'
+    : p.margin < 0 || p.margin > 20 ? 'Margem das pontas deve ficar entre 0 e 20 m.' : null;
+  if (bad) throw new Error(bad);
+  if (corners.length < 3) throw new Error('Marque pelo menos 3 cantos da área.');
+  const mLat = Math.PI / 180 * 6371000, o = corners[0], mLon = mLat * Math.cos(o.lat * Math.PI / 180);
+  const pts = corners.map((c) => ({ x: (c.lon - o.lon) * mLon, y: (c.lat - o.lat) * mLat }));
+  const bounds = (th) => {
+    const c = Math.cos(th), s = Math.sin(th);
+    const us = pts.map((q) => q.x * c + q.y * s), vs = pts.map((q) => -q.x * s + q.y * c);
+    return { u0: Math.min(...us), u1: Math.max(...us), v0: Math.min(...vs), v1: Math.max(...vs) };
+  };
+  let theta = NaN, bestArea = Infinity;
+  pts.forEach((a, i) => {
+    const b = pts[(i + 1) % pts.length];
+    if (Math.abs(b.x - a.x) + Math.abs(b.y - a.y) < 0.01) return;
+    const t = Math.atan2(b.y - a.y, b.x - a.x), bx = bounds(t), ar = (bx.u1 - bx.u0) * (bx.v1 - bx.v0);
+    if (ar < bestArea) { bestArea = ar; theta = t; }
+  });
+  if (isNaN(theta) || bestArea <= 0.01) throw new Error('Os cantos marcados formam uma área vazia.');
+  let box = bounds(theta);
+  if (box.v1 - box.v0 > box.u1 - box.u0) { theta += Math.PI / 2; box = bounds(theta); }
+  const vRange = box.v1 - box.v0, uRange = box.u1 - box.u0;
+
+  const across = p.alt * CAM.sw / CAM.f, along = p.alt * CAM.sh / CAM.f;
+  const lineMax = across * (1 - p.side), photoMax = along * (1 - p.front);
+  const inset = Math.max(0, across / 2 - lineMax), span = vRange - 2 * inset;
+  const nLines = span <= 0.01 ? 1 : Math.ceil(span / lineMax - 1e-9) + 1;
+  const vPos = nLines === 1 ? [box.v0 + vRange / 2]
+    : Array.from({ length: nLines }, (_, i) => Math.min(Math.max(box.v0 + inset + i * span / (nLines - 1), box.v0 + 0.01), box.v1 - 0.01));
+  const lineSpacing = nLines === 1 ? 0 : span / (nLines - 1);
+
+  const c = Math.cos(theta), s = Math.sin(theta);
+  const poly = pts.map((q) => ({ x: q.x * c + q.y * s, y: -q.x * s + q.y * c }));
+  const clip = (v) => {
+    const us = [];
+    poly.forEach((a, i) => { const b = poly[(i + 1) % poly.length];
+      if ((a.y <= v) !== (b.y <= v)) us.push(a.x + (v - a.y) / (b.y - a.y) * (b.x - a.x)); });
+    us.sort((a, b) => a - b);
+    const merged = [];
+    for (let i = 0; i + 1 < us.length; i += 2) {
+      const seg = [us[i] - p.margin, us[i + 1] + p.margin], last = merged[merged.length - 1];
+      if (last && seg[0] <= last[1]) last[1] = Math.max(last[1], seg[1]); else merged.push(seg);
+    }
+    return merged;
+  };
+  let spacing = 0;
+  const built = [];
+  vPos.forEach((v) => {
+    const segs = p.clip ? clip(v) : [[box.u0 - p.margin, box.u1 + p.margin]];
+    if (!segs.length) return;
+    const line = [];
+    segs.forEach(([u0, u1]) => {
+      const len = u1 - u0, n = len < 1e-6 ? 1 : Math.ceil(len / photoMax - 1e-9) + 1, step = n === 1 ? 0 : len / (n - 1);
+      spacing = Math.max(spacing, step);
+      for (let k = 0; k < n; k++) line.push({ u: u0 + k * step, v });
+    });
+    built.push(line);
+  });
+  if (!built.length) throw new Error('Área pequena demais para gerar linhas de voo.');
+  const lines = built.map((l, i) => (i % 2 === 0 ? l : l.slice().reverse()));
+  const total = lines.reduce((a, l) => a + l.length, 0);
+
+  // partes de ate 95 waypoints (limite do Mavic Pro: 99)
+  const MAXP = 95, need = Math.ceil(total / MAXP), target = Math.min(MAXP, Math.ceil(total / need));
+  const parts = []; let cur = [];
+  const flush = () => { if (cur.length) { parts.push(cur); cur = []; } };
+  lines.forEach((l) => {
+    if (l.length > MAXP) { flush(); for (let i = 0; i < l.length; i += MAXP) parts.push(l.slice(i, i + MAXP)); return; }
+    if (cur.length && cur.length + l.length > target) flush();
+    cur.push(...l);
+  });
+  flush();
+
+  const all = lines.flat();
+  let dist = 0;
+  for (let i = 1; i < all.length; i++) dist += Math.hypot(all[i].u - all[i - 1].u, all[i].v - all[i - 1].v);
+  let area = 0;
+  poly.forEach((a, i) => { const b = poly[(i + 1) % poly.length]; area += a.x * b.y - b.x * a.y; });
+  const ll = (u, v) => { const x = u * c - v * s, y = u * s + v * c; return [o.lat + y / mLat, o.lon + x / mLon]; };
+  return { ll, lines, parts, total, nLines: lines.length, perLine: Math.max(...lines.map((l) => l.length)),
+    across, along, gsd: across / CAM.w * 100, spacing, lineSpacing, dist, areaM2: Math.abs(area) / 2, compr: uRange, larg: vRange,
+    sec: dist / p.speed + total * 3.5, bearing: (((90 - theta * 180 / Math.PI) % 360) + 360) % 360 };
+}
+
+function openSim(init) {
+  selected = null; loadList(); clearTimeout(mosTimer);
+  init = init || {};
+  const corners = init.corners || [];
+  const val = { alt: init.alt ?? 15, front: init.front ?? 0.75, side: init.side ?? 0.70, speed: init.speed ?? 2, margin: 3 };
+  const num = (id, label, v, step, min, max) => `<div><label>${label}<input type="number" id="${id}" value="${v}" step="${step}" min="${min}" max="${max}"></label></div>`;
+  $('#main').innerHTML = `
+    <h1>Simulador de malha</h1>
+    <div class="empty" style="padding:0 0 8px">Clique no mapa para marcar os cantos da área (arraste para ajustar, botão direito remove). Usa a mesma conta do app, com a câmera do Mavic Pro.</div>
+    <div class="ctl">
+      ${num('sAlt', 'Altura (m)', val.alt, 1, 3, 50)}${num('sFront', 'Sobreposição frontal (%)', Math.round(val.front * 100), 1, 50, 90)}
+      ${num('sSide', 'Sobreposição lateral (%)', Math.round(val.side * 100), 1, 50, 90)}${num('sSpeed', 'Velocidade (m/s)', val.speed, 0.5, 0.5, 5)}
+      ${num('sMargin', 'Margem das pontas (m)', val.margin, 1, 0, 20)}
+    </div>
+    <div style="margin-bottom:8px"><button class="btn" id="sUndo">Desfazer canto</button><button class="btn" id="sClear">Limpar</button>
+      <label style="color:var(--dim)"><input type="checkbox" id="sClip" checked> recortar pela área</label>
+      <label style="color:var(--dim);margin-left:12px"><input type="checkbox" id="sFoot"> mostrar cobertura de cada foto</label></div>
+    <div id="sMsg"></div><div class="grid" id="sStats"></div>
+    <div id="map" style="margin-top:12px"></div>
+    <h2>Comparar alturas (com as mesmas sobreposições)</h2><div id="sAlts"></div>`;
+  if (map) { map.remove(); map = null; }
+  map = L.map('map');
+  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
+  L.control.layers({ 'Mapa': osm, 'Satélite': sat }).addTo(map);
+  const overlay = L.layerGroup().addTo(map), cornerLayer = L.layerGroup().addTo(map);
+  if (corners.length) map.fitBounds(corners.map((q) => [q.lat, q.lon]), { padding: [40, 40] }); else map.setView([-15.78, -47.93], 4);
+  const PALETTE = ['#3b82f6', '#f59e0b', '#ec4899', '#10b981', '#a855f7', '#ef4444', '#14b8a6', '#eab308'];
+
+  const read = () => ({ alt: +$('#sAlt').value, front: +$('#sFront').value / 100, side: +$('#sSide').value / 100,
+    speed: +$('#sSpeed').value, margin: +$('#sMargin').value, clip: $('#sClip').checked });
+  const fmtT = (s) => (s >= 3600 ? Math.floor(s / 3600) + ' h ' : '') + Math.round((s % 3600) / 60) + ' min';
+
+  function recompute() {
+    overlay.clearLayers();
+    const p = read();
+    const msg = $('#sMsg'), st = $('#sStats');
+    if (corners.length) L.polygon(corners.map((q) => [q.lat, q.lon]), { color: '#2ea043', weight: 2, fillOpacity: .12 }).addTo(overlay);
+    let r = null;
+    try { r = simPlan(corners, p); msg.innerHTML = ''; }
+    catch (e) { msg.innerHTML = `<div class="tag warn">${esc(e.message)}</div>`; st.innerHTML = ''; $('#sAlts').innerHTML = ''; return; }
+    if (r.total > 600) msg.innerHTML = `<div class="tag bad">${r.total} pontos: o app aceita no máximo 600. Aumente a altura ou divida a área.</div>`;
+    if ($('#sFoot').checked) r.lines.flat().forEach((q) => L.polygon(
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => r.ll(q.u + a * r.along / 2, q.v + b * r.across / 2)),
+      { color: '#fbbf24', weight: 1, fillOpacity: .06, interactive: false }).addTo(overlay));
+    r.parts.forEach((part, i) => {
+      const col = PALETTE[i % PALETTE.length], ps = part.map((q) => r.ll(q.u, q.v));
+      L.polyline(ps, { color: col, weight: 2 }).addTo(overlay);
+      ps.forEach((q) => L.circleMarker(q, { radius: 3, color: col, fillOpacity: 1, weight: 1, interactive: false }).addTo(overlay));
+      L.marker(ps[0], { icon: L.divIcon({ className: '', html: `<div class="hicon" style="background:${col}">${i + 1}</div>`, iconSize: [24, 24] }) })
+        .bindTooltip(`Parte ${i + 1}: ${part.length} pontos`).addTo(overlay);
+    });
+    const m = (x) => x.toFixed(1).replace('.', ',');
+    st.innerHTML = stat('pontos de foto', r.total) + stat('linhas de voo', r.nLines) + stat('partes (até 95 pontos)', r.parts.length) +
+      stat('tempo estimado', fmtT(r.sec)) + stat('distância (m)', Math.round(r.dist)) + stat('área (ha)', m(r.areaM2 / 10000)) +
+      stat('pixel no chão (cm)', m(r.gsd)) + stat('foto cobre (m)', `${m(r.across)} × ${m(r.along)}`) +
+      stat('entre fotos (m)', m(r.spacing)) + stat('entre linhas (m)', m(r.lineSpacing)) +
+      stat('rumo do voo (°)', Math.round(r.bearing)) + stat('área (m)', `${Math.round(r.compr)} × ${Math.round(r.larg)}`);
+    let rows = '';
+    [5, 8, 10, 15, 20, 25, 30, 40, 50].forEach((h) => {
+      let t = null; try { t = simPlan(corners, { ...p, alt: h }); } catch (e) { /* ignora */ }
+      rows += `<tr data-h="${h}" class="${h === p.alt ? 'cur' : ''}"><td>${h} m</td>` + (t
+        ? `<td>${t.total}</td><td>${t.nLines}</td><td>${t.parts.length}</td><td>${fmtT(t.sec)}</td><td>${m(t.gsd)}</td></tr>` : '<td colspan="5">—</td></tr>');
+    });
+    $('#sAlts').innerHTML = `<table class="alt"><thead><tr><th>Altura</th><th>Pontos</th><th>Linhas</th><th>Partes</th><th>Tempo</th><th>Pixel (cm)</th></tr></thead><tbody>${rows}</tbody></table>
+      <small style="color:var(--dim)">Toque numa linha para usar a altura. Mais alto = menos pontos e mais rápido, mas o pixel fica maior.</small>`;
+    $('#sAlts').querySelectorAll('tbody tr').forEach((tr) => { tr.onclick = () => { $('#sAlt').value = tr.dataset.h; recompute(); }; });
+  }
+
+  function drawCorners() {
+    cornerLayer.clearLayers();
+    corners.forEach((q, i) => {
+      const mk = L.marker([q.lat, q.lon], { draggable: true, icon: L.divIcon({ className: '', html: `<div class="cn">${i + 1}</div>`, iconSize: [24, 24] }) });
+      mk.on('drag', (e) => { const ll = e.target.getLatLng(); q.lat = ll.lat; q.lon = ll.lng; recompute(); });
+      mk.on('contextmenu', () => { corners.splice(i, 1); drawCorners(); recompute(); });
+      mk.addTo(cornerLayer);
+    });
+  }
+  map.on('click', (e) => { corners.push({ lat: e.latlng.lat, lon: e.latlng.lng }); drawCorners(); recompute(); });
+  $('#sUndo').onclick = () => { corners.pop(); drawCorners(); recompute(); };
+  $('#sClear').onclick = () => { corners.length = 0; drawCorners(); recompute(); };
+  ['sAlt', 'sFront', 'sSide', 'sSpeed', 'sMargin', 'sClip', 'sFoot'].forEach((id) => { $('#' + id).oninput = recompute; });
+  drawCorners(); recompute();
+}
+$('#btnSim').onclick = () => openSim();
 
 let mosTimer = null;
 async function renderMosaico(id, nFotos) {
