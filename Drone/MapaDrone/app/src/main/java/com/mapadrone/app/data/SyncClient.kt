@@ -72,5 +72,18 @@ object SyncClient {
         e.message ?: e.javaClass.simpleName
     }
 
+    /** Pede ao servidor para apagar um voo vazio (ele recusa se houver fotos ou mosaico). */
+    fun deleteFlight(baseUrl: String, flightId: String): String? = try {
+        val conn = URL(base(baseUrl) + "/api/voos/" + enc(flightId)).openConnection() as HttpURLConnection
+        conn.requestMethod = "DELETE"
+        conn.connectTimeout = 5000
+        conn.readTimeout = 10000
+        val code = conn.responseCode
+        conn.disconnect()
+        if (code in 200..299 || code == 404) null else "HTTP $code"
+    } catch (e: Exception) {
+        e.message ?: e.javaClass.simpleName
+    }
+
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 }

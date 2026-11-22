@@ -41,6 +41,7 @@ import io
 import json
 import mimetypes
 import os
+import shutil
 import re
 import threading
 import time
@@ -100,6 +101,11 @@ class DiskStorage:
     def list_names(self, prefix):
         d = self._path(prefix)
         return sorted(f.name for f in d.iterdir() if f.is_file()) if d.is_dir() else []
+
+    def delete_prefix(self, prefix):
+        p = self._path(prefix.rstrip("/"))
+        if p.is_dir():
+            shutil.rmtree(p)
 
     def describe(self):
         return f"disco em {self.root}"
@@ -171,6 +177,13 @@ class S3Storage:
         for resp in self._list(prefix.rstrip("/") + "/"):
             names += [o["Key"].rsplit("/", 1)[-1] for o in resp.get("Contents", []) if not o["Key"].endswith("/")]
         return sorted(names)
+
+    def delete_prefix(self, prefix):
+        prefix = prefix.rstrip("/") + "/"
+        for resp in self._list(prefix):
+            objs = [{"Key": o["Key"]} for o in resp.get("Contents", [])]
+            if objs:
+                self.s3.delete_objects(Bucket=self.bucket, Delete={"Objects": objs})
 
     def describe(self):
         return f"S3 {self.endpoint} bucket {self.bucket}"
@@ -399,6 +412,22 @@ class Handler(BaseHTTPRequestHandler):
             self._set_proc(vid, p)
         self._send(200, {"ok": True})
 
+    def do_DELETE(self):
+        parts = self.path.split("?")[0].strip("/").split("/")
+        if len(parts) == 3 and parts[:2] == ["api", "voos"] and ID_RE.match(parts[2]):
+            vid, st = parts[2], self.storage
+            if self._voo(vid) is None:
+                return self._send(404, {"error": "nao encontrado"})
+            # Seguranca: so apaga voo vazio (tentativa que falhou). Com fotos ou mosaico, recusa.
+            if st.list_names(f"{vid}/originais") or st.list_names(f"{vid}/mosaico"):
+                return self._send(409, {"error": "o voo tem fotos ou mosaico; so voos vazios podem ser excluidos"})
+            if self._proc(vid).get("status") in ("fila", "processando"):
+                return self._send(409, {"error": "o voo esta na fila de mosaico"})
+            st.delete_prefix(vid)
+            self.log_message("voo vazio %s excluido", vid)
+            return self._send(200, {"ok": True})
+        self._send(404, {"error": "nao encontrado"})
+
     def do_PUT(self):
         parts = self.path.split("?")[0].strip("/").split("/")
         if len(parts) == 3 and parts[:2] == ["api", "logs"] and FILE_RE.match(parts[2]):
@@ -536,7 +565,8 @@ async function openVoo(id) {
   const pct = (x) => (x == null ? '—' : Math.round(x * 100) + '%');
   $('#main').innerHTML = `
     <h1>${esc(v.areaName || 'Sem nome')} · ${esc(v.id)} <span class="tag ${statusClass(v.status)}">${esc(v.status)}</span>
-      ${(v.corners || []).length >= 3 ? '<button class="btn" id="btnSimVoo" style="margin-left:10px">Simular esta área</button>' : ''}</h1>
+      ${(v.corners || []).length >= 3 ? '<button class="btn" id="btnSimVoo" style="margin-left:10px">Simular esta área</button>' : ''}
+      ${fotos.length === 0 ? '<button class="btn" id="btnDelVoo" style="margin-left:6px">Excluir voo vazio</button>' : ''}</h1>
     <div id="map"></div>
     <h2>Mosaico</h2><div id="mos"></div>
     <h2>Parâmetros</h2>
@@ -560,6 +590,13 @@ async function openVoo(id) {
   });
   drawMap(v);
   renderMosaico(id, fotos.length);
+  const bd = $('#btnDelVoo');
+  if (bd) bd.onclick = async () => {
+    if (!confirm(`Excluir o voo ${id}? Ele não tem fotos.`)) return;
+    const r = await fetch(`${API}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!r.ok) return alert((await r.json().catch(() => ({}))).error || 'Falha ao excluir');
+    selected = null; $('#main').innerHTML = '<div class="empty">Voo excluído.</div>'; loadList();
+  };
   const bs = $('#btnSimVoo');
   if (bs) bs.onclick = () => openSim({ corners: v.corners.map((c) => ({ lat: c.lat, lon: c.lon })),
     alt: v.altitudeM, front: v.frontOverlap, side: v.sideOverlap, speed: v.speedMs });

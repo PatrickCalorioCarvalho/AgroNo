@@ -69,6 +69,8 @@ class MainActivity : Activity(), DroneListener {
     private var partPhotos = 0
     private var photosBeforePart = 0
     private var missionRunning = false
+    /** true entre tocar em Iniciar e o drone responder: impede abrir um segundo voo nesse intervalo. */
+    private var starting = false
 
     private val dynamicOverlays = mutableListOf<org.osmdroid.views.overlay.Overlay>()
     private lateinit var droneMarker: Marker
@@ -609,6 +611,7 @@ class MainActivity : Activity(), DroneListener {
 
         val block = when {
             missionRunning -> "Ja existe uma parte em execucao."
+            starting -> "Aguarde: a missao esta sendo enviada ao drone."
             !s.registered -> "SDK nao registrado: ${s.registrationMessage}"
             !s.connected -> "Drone nao conectado."
             !s.isFlying -> "Decole manualmente e deixe o drone estavel no ar antes de iniciar."
@@ -640,7 +643,9 @@ class MainActivity : Activity(), DroneListener {
     }
 
     private fun startPart(p: Plan, part: List<com.mapadrone.app.core.PlanWaypoint>) {
-        if (nextPart == 0) {
+        if (starting || missionRunning) return toast("Ja existe uma missao em andamento.")
+        val newFlight = nextPart == 0
+        if (newFlight) {
             record = FlightRecord(
                 id = store.newId(),
                 startedAtMs = System.currentTimeMillis(),
@@ -667,10 +672,14 @@ class MainActivity : Activity(), DroneListener {
 
         DroneManager.prepareCamera { err -> if (err != null) runOnUiThread { addLog("Gimbal/camera: $err") } }
         val sendPart: List<PlanWaypoint> = home?.takeIf { nextPart == p.parts.lastIndex }?.let { part + PlanWaypoint(it, -1, photo = false) } ?: part
+        starting = true
         DroneManager.startPart(sendPart, p.params) { err ->
+            starting = false
             if (err != null) {
                 addLog("ERRO: $err")
                 toast(err)
+                // Voo que nem chegou a decolar a missao nao vira registro (o motivo fica no log do app).
+                if (newFlight) discardRecord(rec, "falha ao iniciar")
             } else {
                 missionRunning = true
                 runOnUiThread { updateBars() }
@@ -681,16 +690,34 @@ class MainActivity : Activity(), DroneListener {
         }
     }
 
+    /** Apaga o registro de um voo que nao chegou a fotografar nada. O motivo fica no log do app. */
+    private fun discardRecord(rec: FlightRecord, reason: String) {
+        AppLog.log("[${rec.id}] voo descartado ($reason, 0 fotos)")
+        store.delete(rec.id)
+        if (record?.id == rec.id) record = null
+    }
+
     private fun stopMission() {
+        val wasRunning = missionRunning
         DroneManager.stop { err ->
             runOnUiThread {
                 missionRunning = false
+                starting = false
                 updateBars()
-                record?.let {
-                    it.status = "interrompido"
-                    it.endedAtMs = System.currentTimeMillis()
-                    it.log += "${FlightRecord.format(System.currentTimeMillis())} Missao interrompida pelo usuario${err?.let { e -> " ($e)" } ?: ""}"
-                    store.save(it)
+                val rec = record
+                // So mexe no registro se havia uma parte em execucao: Parar depois de concluir nao reescreve o status.
+                if (wasRunning && rec != null) {
+                    rec.photosTriggered = maxOf(rec.photosTriggered, photosBeforePart + partPhotos)
+                    if (rec.photosTriggered == 0 && nextPart == 0) {
+                        discardRecord(rec, "interrompido pelo usuario")
+                    } else {
+                        rec.status = "interrompido"
+                        rec.endedAtMs = System.currentTimeMillis()
+                        rec.log += "${FlightRecord.format(System.currentTimeMillis())} Missao interrompida pelo usuario${err?.let { e -> " ($e)" } ?: ""}"
+                        store.save(rec)
+                    }
+                } else if (err != null) {
+                    AppLog.log("Parar sem missao em execucao: $err")
                 }
                 toast(err ?: "Missao parada. O drone fica parado no ar: assuma o controle e pouse.")
                 nextPart = 0
@@ -820,6 +847,24 @@ class MainActivity : Activity(), DroneListener {
             .setTitle("Historico de voos")
             .setAdapter(adapter) { _, i -> showRecord(records[i]) }
             .setPositiveButton("Fechar", null)
+            .setNegativeButton("Excluir vazios") { _, _ -> deleteEmptyFlights() }
+            .show()
+    }
+
+    /** Apaga os registros sem nenhuma foto (tentativas que falharam), no tablet e, se der, no servidor. */
+    private fun deleteEmptyFlights() {
+        val active = if (missionRunning || starting) record?.id else null
+        val empty = store.list().filter { it.photosTriggered == 0 && it.id != active }
+        if (empty.isEmpty()) return toast("Nao ha voos vazios.")
+        AlertDialog.Builder(this)
+            .setMessage("Excluir ${empty.size} voo(s) sem fotos? Voos com fotos nao sao afetados.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Excluir") { _, _ ->
+                val url = serverUrl
+                empty.forEach { store.delete(it.id); AppLog.log("[${it.id}] voo vazio excluido pelo usuario") }
+                if (url.isNotBlank()) Thread { empty.forEach { SyncClient.deleteFlight(url, it.id) } }.start()
+                toast("${empty.size} voo(s) excluido(s).")
+            }
             .show()
     }
 
