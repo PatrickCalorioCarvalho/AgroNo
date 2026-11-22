@@ -46,7 +46,11 @@ data class DroneStatus(
     val batteryPercent: Int = -1,
     val position: LatLon? = null,
     val altitudeM: Float = 0f,
-    val isFlying: Boolean = false
+    val isFlying: Boolean = false,
+    /** Modo de voo informado pelo drone (ex.: GPS_WAYPOINT, GO_HOME, GPS_ATTI) e se esta voltando para casa. */
+    val flightMode: String = "",
+    val goingHome: Boolean = false,
+    val lowBattery: Boolean = false
 )
 
 interface DroneListener {
@@ -124,8 +128,15 @@ object DroneManager {
             val loc = st.aircraftLocation
             val valid = loc != null && !loc.latitude.isNaN() && !loc.longitude.isNaN() &&
                 (loc.latitude != 0.0 || loc.longitude != 0.0)
+            val mode = st.flightModeString ?: ""
+            if (mode != status.flightMode || st.isGoingHome != status.goingHome || st.isLowerThanBatteryWarningThreshold != status.lowBattery) {
+                com.mapadrone.app.data.AppLog.log("DJI: modo de voo=$mode, voltando para casa=${st.isGoingHome}, bateria baixa=${st.isLowerThanBatteryWarningThreshold}, missao=${operator?.currentState}")
+            }
             update {
                 it.copy(
+                    flightMode = mode,
+                    goingHome = st.isGoingHome,
+                    lowBattery = st.isLowerThanBatteryWarningThreshold,
                     satellites = st.satelliteCount,
                     position = if (valid) LatLon(loc.latitude, loc.longitude) else null,
                     altitudeM = if (loc != null && !loc.altitude.isNaN()) loc.altitude else 0f,
@@ -332,7 +343,8 @@ object DroneManager {
     }
 
     fun pause(onResult: (String?) -> Unit) {
-        operator?.pauseMission(done { onResult(it) }) ?: onResult("Operador indisponivel.")
+        com.mapadrone.app.data.AppLog.log("DJI: pauseMission (estado ${operator?.currentState})")
+        operator?.pauseMission(done { com.mapadrone.app.data.AppLog.log("DJI: pauseMission -> ${it ?: "ok"}"); onResult(it) }) ?: onResult("Operador indisponivel.")
     }
 
     fun resume(onResult: (String?) -> Unit) {
@@ -341,6 +353,13 @@ object DroneManager {
 
     fun stop(onResult: (String?) -> Unit) {
         pendingStart = false
-        operator?.stopMission(done { onResult(it) }) ?: onResult("Operador indisponivel.")
+        com.mapadrone.app.data.AppLog.log("DJI: stopMission (estado ${operator?.currentState}, modo ${status.flightMode})")
+        operator?.stopMission(done { com.mapadrone.app.data.AppLog.log("DJI: stopMission -> ${it ?: "ok"}"); onResult(it) }) ?: onResult("Operador indisponivel.")
+    }
+
+    /** Cancela o retorno automatico para casa (RTH), devolvendo o controle ao piloto. */
+    fun cancelGoHome(onResult: (String?) -> Unit) {
+        val fc = aircraft()?.flightController ?: return onResult("Controlador de voo indisponivel.")
+        fc.cancelGoHome(done { onResult(it) })
     }
 }

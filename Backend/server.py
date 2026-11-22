@@ -672,16 +672,10 @@ function simPlan(corners, p) {
   const lines = built.map((l, i) => (i % 2 === 0 ? l : l.slice().reverse()));
   const total = lines.reduce((a, l) => a + l.length, 0);
 
-  // partes de ate 95 waypoints (limite do Mavic Pro: 99)
-  const MAXP = 95, need = Math.ceil(total / MAXP), target = Math.min(MAXP, Math.ceil(total / need));
-  const parts = []; let cur = [];
-  const flush = () => { if (cur.length) { parts.push(cur); cur = []; } };
-  lines.forEach((l) => {
-    if (l.length > MAXP) { flush(); for (let i = 0; i < l.length; i += MAXP) parts.push(l.slice(i, i + MAXP)); return; }
-    if (cur.length && cur.length + l.length > target) flush();
-    cur.push(...l);
-  });
-  flush();
+  // partes: o menor numero de partes de ate 95 waypoints (limite do Mavic Pro: 99), de tamanho parecido
+  const MAXP = 95, nParts = Math.max(1, Math.ceil(total / MAXP)), size = Math.ceil(total / nParts);
+  const flat = lines.flat(), parts = [];
+  for (let i = 0; i < flat.length; i += size) parts.push(flat.slice(i, i + size));
 
   const all = lines.flat();
   let dist = 0;
@@ -691,7 +685,7 @@ function simPlan(corners, p) {
   const ll = (u, v) => { const x = u * c - v * s, y = u * s + v * c; return [o.lat + y / mLat, o.lon + x / mLon]; };
   return { ll, lines, parts, total, nLines: lines.length, perLine: Math.max(...lines.map((l) => l.length)),
     across, along, gsd: across / CAM.w * 100, spacing, lineSpacing, dist, areaM2: Math.abs(area) / 2, compr: uRange, larg: vRange,
-    sec: dist / p.speed + total * 3.5, bearing: (((90 - theta * 180 / Math.PI) % 360) + 360) % 360 };
+    sec: dist / p.speed + total * 4.0, bearing: (((90 - theta * 180 / Math.PI) % 360) + 360) % 360 };
 }
 
 function openSim(init) {
@@ -747,7 +741,7 @@ function openSim(init) {
         .bindTooltip(`Parte ${i + 1}: ${part.length} pontos`).addTo(overlay);
     });
     const m = (x) => x.toFixed(1).replace('.', ',');
-    st.innerHTML = stat('pontos de foto', r.total) + stat('linhas de voo', r.nLines) + stat('partes (até 95 pontos)', r.parts.length) +
+    st.innerHTML = stat('pontos de foto', r.total) + stat('linhas de voo', r.nLines) + stat('partes (até 95 pontos)', r.parts.length) + stat('baterias (~12 min)', Math.max(1, Math.ceil(r.sec / 60 / 12))) +
       stat('tempo estimado', fmtT(r.sec)) + stat('distância (m)', Math.round(r.dist)) + stat('área (ha)', m(r.areaM2 / 10000)) +
       stat('pixel no chão (cm)', m(r.gsd)) + stat('foto cobre (m)', `${m(r.across)} × ${m(r.along)}`) +
       stat('entre fotos (m)', m(r.spacing)) + stat('entre linhas (m)', m(r.lineSpacing)) +

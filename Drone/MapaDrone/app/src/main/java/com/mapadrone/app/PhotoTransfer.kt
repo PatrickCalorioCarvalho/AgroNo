@@ -56,14 +56,28 @@ class PhotoTransfer(
     }
 
     private fun choose(rec: FlightRecord, all: List<MediaFile>) {
-        val pad = 15 * 60_000L
+        // Janela curta: com 15 min entrariam fotos de voos feitos logo antes ou depois (ex.: tentativas anteriores).
+        val pad = 90_000L
         val from = rec.startedAtMs - pad
         val to = (if (rec.endedAtMs > 0) rec.endedAtMs else rec.startedAtMs + 3 * 3_600_000L) + pad
         val inWindow = all.filter { DroneManager.photoTimeMs(it) in from..to }
         val fmt = { f: MediaFile -> FlightRecord.format(DroneManager.photoTimeMs(f)) }
         val cancel = { running = false; DroneManager.exitDownloadMode() }
 
-        if (inWindow.isNotEmpty()) {
+        val extra = inWindow.size - rec.photosTriggered
+        if (inWindow.isNotEmpty() && extra > 2 && rec.photosTriggered > 0) {
+            // Mais fotos que disparos: as sobras sao de outro voo. As mais antigas saem primeiro.
+            val n = rec.photosTriggered
+            AlertDialog.Builder(act)
+                .setTitle("Voo ${rec.id}")
+                .setMessage("${inWindow.size} foto(s) do cartao no horario do voo, mas o voo registrou so $n disparo(s).\n" +
+                    "As $extra a mais devem ser de outro voo.\nEnviar so as ultimas $n?")
+                .setPositiveButton("Enviar as ultimas $n") { _, _ -> run(rec, inWindow.takeLast(n)) }
+                .setNeutralButton("Enviar todas (${inWindow.size})") { _, _ -> run(rec, inWindow) }
+                .setNegativeButton("Cancelar") { _, _ -> cancel() }
+                .setOnCancelListener { cancel() }
+                .show()
+        } else if (inWindow.isNotEmpty()) {
             AlertDialog.Builder(act)
                 .setTitle("Voo ${rec.id}")
                 .setMessage("${inWindow.size} foto(s) do cartao no horario do voo (${fmt(inWindow.first())} a ${fmt(inWindow.last())}).\n" +

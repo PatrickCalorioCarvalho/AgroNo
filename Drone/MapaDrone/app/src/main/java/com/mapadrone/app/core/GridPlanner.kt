@@ -5,7 +5,6 @@ import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.sin
 
 data class PlanParams(
@@ -18,8 +17,8 @@ data class PlanParams(
     /** O Mavic Pro aceita ate 99 waypoints por missao; deixamos folga. */
     val maxWaypointsPerPart: Int = 95,
     val maxTotalWaypoints: Int = 600,
-    /** Tempo medio parado em cada waypoint (estabilizar + foto), usado so na estimativa. */
-    val secondsPerWaypoint: Double = 3.5,
+    /** Tempo medio gasto em cada waypoint (parar, estabilizar, foto e acelerar), medido em voo real; usado so na estimativa. */
+    val secondsPerWaypoint: Double = 4.0,
     /** false reproduz o planejador antigo (retangulo envolvente), usado so para continuar voos antigos. */
     val clipToPolygon: Boolean = true
 ) {
@@ -164,25 +163,14 @@ object GridPlanner {
         )
     }
 
+    /**
+     * Divide a rota no menor numero de partes de ate [maxPerPart] pontos, com tamanhos parecidos.
+     * Pode cortar no meio de uma linha: a parte seguinte continua do ponto vizinho.
+     */
     private fun splitIntoParts(lines: List<List<PlanWaypoint>>, maxPerPart: Int): List<List<PlanWaypoint>> {
-        val total = lines.sumOf { it.size }
-        val partsNeeded = ceil(total.toDouble() / maxPerPart).toInt()
-        val target = min(maxPerPart, ceil(total.toDouble() / partsNeeded).toInt())
-        val parts = mutableListOf<List<PlanWaypoint>>()
-        var current = mutableListOf<PlanWaypoint>()
-        fun flush() { if (current.isNotEmpty()) { parts += current; current = mutableListOf() } }
-        for (line in lines) {
-            if (line.size > maxPerPart) {
-                // Linha maior que o limite de uma missao: corta em pedacos.
-                flush()
-                line.chunked(maxPerPart).forEach { parts += it }
-                continue
-            }
-            if (current.isNotEmpty() && current.size + line.size > target) flush()
-            current.addAll(line)
-        }
-        flush()
-        return parts
+        val all = lines.flatten()
+        val partsNeeded = ceil(all.size.toDouble() / maxPerPart).toInt().coerceAtLeast(1)
+        return all.chunked(ceil(all.size.toDouble() / partsNeeded).toInt().coerceAtLeast(1))
     }
 
     /** Trechos [u0, u1] da linha v dentro do poligono (pares de cruzamentos), cada um estendido pela margem. */

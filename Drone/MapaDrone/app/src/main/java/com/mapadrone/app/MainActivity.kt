@@ -16,6 +16,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.graphics.SurfaceTexture
 import android.view.TextureView
 import android.view.View
@@ -49,9 +51,13 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
 import java.io.File
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 private const val BATTERY_PAUSE_PERCENT = 35
+/** Consumo medio medido em voo (~65% utilizaveis em ~13 min), usado para decidir se da para iniciar a proxima parte. */
+private const val BATTERY_PCT_PER_MIN = 5.0
+private const val CHAIN_DELAY_MS = 8000L
 
 class MainActivity : Activity(), DroneListener {
 
@@ -71,6 +77,10 @@ class MainActivity : Activity(), DroneListener {
     private var missionRunning = false
     /** true entre tocar em Iniciar e o drone responder: impede abrir um segundo voo nesse intervalo. */
     private var starting = false
+    /** true se o usuario (ou a bateria) mandou parar: nao encadeia a proxima parte sozinho. */
+    private var stopRequested = false
+    private var chainCountdown = false
+    private val chainHandler = Handler(Looper.getMainLooper())
 
     private val dynamicOverlays = mutableListOf<org.osmdroid.views.overlay.Overlay>()
     private lateinit var droneMarker: Marker
@@ -491,6 +501,8 @@ class MainActivity : Activity(), DroneListener {
         plan = null
         resumeNote = ""
         nextPart = 0
+        chainCountdown = false
+        chainHandler.removeCallbacksAndMessages(null)
         tvPlan.text = if (corners.isEmpty()) {
             "Marque os cantos da area (botao ou toque longo no mapa) e gere o plano."
         } else {
@@ -515,7 +527,8 @@ class MainActivity : Activity(), DroneListener {
                 append("Foto a cada %.1f m  |  linhas a cada %.1f m  |  rumo %.0f graus\n".format(p.photoSpacingM, p.lineSpacingM, p.flightBearingDeg))
                 append("Distancia %.0f m  |  tempo estimado ~%d min\n".format(p.totalDistanceM, minutes))
                 append("Partes: ${p.parts.size} (limite de ${p.params.maxWaypointsPerPart} pontos por missao)")
-                if (minutes > 15) append("\nATENCAO: tempo longo para uma bateria do Mavic Pro. Troque a bateria entre as partes.")
+                val batteries = ceil(p.estimatedSeconds / 60.0 / 12.0).toInt()
+                if (batteries > 1) append("\nSao necessarias ~$batteries baterias (~12 min de missao cada). As partes seguem sozinhas enquanto houver bateria; ao acabar, pouse, troque e toque em Iniciar missao.")
             }
             updateBars()
             redraw()
@@ -603,13 +616,10 @@ class MainActivity : Activity(), DroneListener {
 
     // ---- Missao ----
 
-    private fun confirmStart() {
-        val p = plan ?: return toast("Gere o plano primeiro.")
+    /** Motivo para nao poder iniciar a parte agora, ou null se esta tudo certo. */
+    private fun startBlockReason(p: Plan, part: List<PlanWaypoint>): String? {
         val s = DroneManager.status
-        val params = p.params
-        val part = p.parts.getOrNull(nextPart) ?: return toast("Todas as partes ja foram executadas. Gere um novo plano.")
-
-        val block = when {
+        return when {
             missionRunning -> "Ja existe uma parte em execucao."
             starting -> "Aguarde: a missao esta sendo enviada ao drone."
             !s.registered -> "SDK nao registrado: ${s.registrationMessage}"
@@ -623,6 +633,47 @@ class MainActivity : Activity(), DroneListener {
                 if (d > 150) "O primeiro ponto esta a %.0f m do drone (maximo 150 m).".format(d) else null
             }
         }
+    }
+
+    /** Segundos estimados para voar uma parte (distancia / velocidade + tempo por ponto). */
+    private fun partSeconds(p: Plan, part: List<PlanWaypoint>): Double =
+        part.zipWithNext().sumOf { (a, b) -> Geo.distance(a.position, b.position) } / p.params.speedMs + part.size * p.params.secondsPerWaypoint
+
+    /**
+     * Ao terminar uma parte, se ainda ha bateria para a proxima (acima do limite de 35% mais o consumo estimado
+     * com 20% de folga), inicia sozinha depois de uma contagem para dar tempo de cancelar com PARAR.
+     * Sem bateria suficiente, para ali e espera a troca.
+     */
+    private fun maybeChainNext(p: Plan) {
+        val part = p.parts.getOrNull(nextPart) ?: return
+        val battery = DroneManager.status.batteryPercent
+        val need = BATTERY_PAUSE_PERCENT + ceil(partSeconds(p, part) / 60.0 * BATTERY_PCT_PER_MIN * 1.2).toInt()
+        val block = startBlockReason(p, part)
+        if (block != null || battery < need) {
+            addLog("Parte ${nextPart + 1} nao inicia sozinha: ${block ?: "bateria em $battery%, precisa de $need% para essa parte"}.")
+            return
+        }
+        chainCountdown = true
+        addLog("Bateria em $battery% (precisa de $need%): parte ${nextPart + 1} inicia sozinha em ${CHAIN_DELAY_MS / 1000} s.")
+        tvPlan.text = "Parte $nextPart concluida. A parte ${nextPart + 1} inicia sozinha em ${CHAIN_DELAY_MS / 1000} s (bateria $battery%). Toque em PARAR para cancelar."
+        toast("Parte ${nextPart + 1} inicia em ${CHAIN_DELAY_MS / 1000} s. Toque em PARAR para cancelar.")
+        chainHandler.postDelayed({
+            if (!chainCountdown || missionRunning || starting) return@postDelayed
+            chainCountdown = false
+            val pl = plan ?: return@postDelayed
+            val next = pl.parts.getOrNull(nextPart) ?: return@postDelayed
+            val again = startBlockReason(pl, next)
+            if (again != null) { addLog("Parte ${nextPart + 1} nao iniciou sozinha: $again"); return@postDelayed }
+            startPart(pl, next)
+        }, CHAIN_DELAY_MS)
+    }
+
+    private fun confirmStart() {
+        val p = plan ?: return toast("Gere o plano primeiro.")
+        val params = p.params
+        val part = p.parts.getOrNull(nextPart) ?: return toast("Todas as partes ja foram executadas. Gere um novo plano.")
+
+        val block = startBlockReason(p, part)
         if (block != null) return AlertDialog.Builder(this).setTitle("Nao e possivel iniciar").setMessage(block).setPositiveButton("OK", null).show().let {}
 
         val msg = "Parte ${nextPart + 1} de ${p.parts.size}  (${part.size} pontos)\n" +
@@ -644,6 +695,8 @@ class MainActivity : Activity(), DroneListener {
 
     private fun startPart(p: Plan, part: List<com.mapadrone.app.core.PlanWaypoint>) {
         if (starting || missionRunning) return toast("Ja existe uma missao em andamento.")
+        stopRequested = false
+        chainCountdown = false
         val newFlight = nextPart == 0
         if (newFlight) {
             record = FlightRecord(
@@ -697,7 +750,10 @@ class MainActivity : Activity(), DroneListener {
         if (record?.id == rec.id) record = null
     }
 
-    private fun stopMission() {
+    private fun stopMission(reason: String = "usuario") {
+        stopRequested = true
+        chainCountdown = false
+        chainHandler.removeCallbacksAndMessages(null)
         val wasRunning = missionRunning
         DroneManager.stop { err ->
             runOnUiThread {
@@ -709,17 +765,31 @@ class MainActivity : Activity(), DroneListener {
                 if (wasRunning && rec != null) {
                     rec.photosTriggered = maxOf(rec.photosTriggered, photosBeforePart + partPhotos)
                     if (rec.photosTriggered == 0 && nextPart == 0) {
-                        discardRecord(rec, "interrompido pelo usuario")
+                        discardRecord(rec, "interrompido: $reason")
                     } else {
-                        rec.status = "interrompido"
+                        rec.status = if (reason == "bateria") "pausado por bateria" else "interrompido"
                         rec.endedAtMs = System.currentTimeMillis()
-                        rec.log += "${FlightRecord.format(System.currentTimeMillis())} Missao interrompida pelo usuario${err?.let { e -> " ($e)" } ?: ""}"
+                        rec.log += "${FlightRecord.format(System.currentTimeMillis())} Missao interrompida ($reason)${err?.let { e -> " ($e)" } ?: ""}"
                         store.save(rec)
                     }
                 } else if (err != null) {
                     AppLog.log("Parar sem missao em execucao: $err")
                 }
-                toast(err ?: "Missao parada. O drone fica parado no ar: assuma o controle e pouse.")
+                if (err != null) {
+                    // O drone nao reconhece missao em execucao: pode estar voltando para casa (RTH) ou ja fora do modo waypoint.
+                    if (DroneManager.status.goingHome) DroneManager.cancelGoHome { e -> AppLog.log("DJI: cancelGoHome -> ${e ?: "ok"}") }
+                    AlertDialog.Builder(this)
+                        .setTitle("O drone nao aceitou parar")
+                        .setMessage("Resposta: $err\nModo de voo: ${DroneManager.status.flightMode.ifBlank { "?" }}\n\n" +
+                            "Se ele nao obedece ao controle:\n" +
+                            "- Aperte o botao PAUSE do controle.\n" +
+                            "- Se esta voltando para casa (RTH), aperte o botao RTH do controle para cancelar.\n" +
+                            "- Mude a chave de modo de voo (P-S-P) para retomar o controle manual.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                } else {
+                    toast("Missao parada. O drone fica parado no ar: assuma o controle e pouse.")
+                }
                 nextPart = 0
                 syncPending()
             }
@@ -740,11 +810,11 @@ class MainActivity : Activity(), DroneListener {
         if (!missionRunning) batteryPaused = false
         if (missionRunning && !batteryPaused && status.batteryPercent in 0..BATTERY_PAUSE_PERCENT) {
             batteryPaused = true
-            DroneManager.pause { }
-            record?.let { it.status = "pausado por bateria"; addLog("Bateria em ${status.batteryPercent}%: missao pausada automaticamente."); store.save(it) }
+            addLog("Bateria em ${status.batteryPercent}%: missao parada automaticamente (o controle volta a valer).")
+            stopMission("bateria")
             AlertDialog.Builder(this)
                 .setTitle("Bateria baixa: ${status.batteryPercent}%")
-                .setMessage("A missao foi PAUSADA automaticamente.\n\nVolte ao ponto H e pouse, troque a bateria e use Mais > Continuar voo anterior. Se o drone comecar o retorno automatico da DJI, deixe-o terminar.")
+                .setMessage("A missao foi PARADA automaticamente e voce tem o controle do drone.\n\nVolte ao ponto H e pouse, troque a bateria e use Mais > Continuar voo anterior. Se o drone comecar o retorno automatico da DJI, deixe-o terminar.")
                 .setPositiveButton("OK", null)
                 .show()
         }
@@ -759,6 +829,7 @@ class MainActivity : Activity(), DroneListener {
                 append('\n')
                 append("Alt %.1f m  |  ".format(status.altitudeM))
                 append(if (status.isFlying) "voando" else "no solo")
+                if (status.flightMode.isNotBlank()) append("\nModo: ${status.flightMode}${if (status.goingHome) " (VOLTANDO)" else ""}")
             }
         }
         val pos = status.position
@@ -831,6 +902,7 @@ class MainActivity : Activity(), DroneListener {
             }
         }
         store.save(rec)
+        if (error == null && !stopRequested && rec.status.startsWith("aguardando")) maybeChainNext(p)
     }
 
     override fun onLog(message: String) {
