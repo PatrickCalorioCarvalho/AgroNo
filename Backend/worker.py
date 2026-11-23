@@ -216,6 +216,11 @@ def process(job):
             api("PUT", f"/api/voos/{vid}/mosaico/orthophoto.tif", data=f, timeout=1800).raise_for_status()
         report(vid, "concluido", 100, "Mosaico pronto" if preview else "Mosaico pronto (sem previa em JPG)")
         log(f"voo {vid}: concluido")
+        try:  # analise da lavoura (indices RGB) em segundo plano no servidor; o mosaico ja esta pronto, entao falha nao importa
+            r = api("POST", f"/api/voos/{vid}/analisar", timeout=30)
+            log(f"voo {vid}: analise da lavoura {'iniciada' if r.ok else 'nao iniciada (HTTP %s)' % r.status_code}")
+        except requests.RequestException as e:
+            log(f"voo {vid}: analise da lavoura nao iniciada ({e})")
     except Exception as e:
         log(f"voo {vid}: ERRO {e}")
         report(vid, "erro", None, str(e))

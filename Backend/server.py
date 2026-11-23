@@ -32,6 +32,10 @@ Mosaico (processado pelo worker.py com o NodeODM; a fila fica em <voo_id>/proces
     POST /api/voos/<id>/processamento       (worker) atualiza estado/progresso
     PUT  /api/voos/<id>/mosaico/<arquivo>   (worker) envia o resultado (orthophoto.tif, mosaico.jpg)
     GET  /api/voos/<id>/mosaico[/<arquivo>] lista / baixa o resultado
+Analise da lavoura sobre o mosaico (analise.py; so RGB: VARI/ExG/GLI, cobertura do solo, zonas de vigor):
+    POST /api/voos/<id>/analisar            calcula em segundo plano (o worker chama ao terminar o mosaico)
+    GET  /api/voos/<id>/analise             estado: nenhuma | processando | erro | pronta (+ estatisticas e limites do mapa)
+    GET  /api/voos/<id>/analise/<arquivo>   camada PNG (vari, exg, gli, cobertura, zonas) ou analise.json
 
 Uso:  python server.py [--port 8000] [--data ./data] [--host 0.0.0.0]
 Sem autenticacao: use so em rede local confiavel.
@@ -43,6 +47,7 @@ import mimetypes
 import os
 import shutil
 import re
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -66,6 +71,8 @@ MAX_PHOTO = 100 * 1024 * 1024
 THUMB_PX = 480
 MAX_MOSAICO = 2 * 1024 * 1024 * 1024
 MIN_FOTOS_MOSAICO = 3
+ANALISES = {}  # voo_id -> {"status": "processando"|"erro", "mensagem": ...} (estado em memoria da analise)
+ANALISE_LOCK = threading.Lock()
 FILA_STALE_S = 1800  # job "processando" sem sinal do worker por tanto tempo volta para a fila
 FILA_LOCK = threading.Lock()
 UUID_RE = re.compile(r"^[0-9A-Za-z-]{8,64}$")  # id da tarefa no NodeODM
@@ -316,6 +323,16 @@ class Handler(BaseHTTPRequestHandler):
                 if data is None:
                     return self._send(404, {"error": "nao encontrado"})
                 return self._send_bytes(200, data, mimetypes.guess_type(parts[4])[0] or "image/tiff", "no-cache")
+            if len(parts) == 4 and parts[3] == "analise":
+                raw = st.get(f"{vid}/analise/analise.json")
+                if raw is not None:
+                    return self._send(200, {"status": "pronta", **json.loads(raw)})
+                return self._send(200, ANALISES.get(vid) or {"status": "nenhuma"})
+            if len(parts) == 5 and parts[3] == "analise" and FILE_RE.match(parts[4]):
+                data = st.get(f"{vid}/analise/{parts[4]}")
+                if data is None:
+                    return self._send(404, {"error": "nao encontrado"})
+                return self._send_bytes(200, data, mimetypes.guess_type(parts[4])[0] or "application/octet-stream", "no-cache")
             if len(parts) == 5 and parts[3] in ("fotos", "miniaturas") and FILE_RE.match(parts[4]):
                 folder, name = ("originais", parts[4]) if parts[3] == "fotos" else ("miniaturas", parts[4] + ".jpg")
                 data = st.get(f"{vid}/{folder}/{name}")
@@ -329,6 +346,8 @@ class Handler(BaseHTTPRequestHandler):
         parts = self.path.split("?")[0].strip("/").split("/")
         if parts == ["api", "fila", "proximo"]:
             return self._fila_proximo()
+        if len(parts) == 4 and parts[:2] == ["api", "voos"] and ID_RE.match(parts[2]) and parts[3] == "analisar":
+            return self._analisar(parts[2])
         if len(parts) == 4 and parts[:2] == ["api", "voos"] and ID_RE.match(parts[2]) \
                 and parts[3] in ("processar", "processamento"):
             return self._processar(parts[2]) if parts[3] == "processar" else self._atualizar_proc(parts[2])
@@ -351,6 +370,48 @@ class Handler(BaseHTTPRequestHandler):
         self.log_message("voo %s salvo (%s pontos na rota, area '%s')", voo_id, len(voo.get("route", [])),
                          voo.get("areaName", ""))
         self._send(200, {"ok": True, "id": voo_id})
+
+    def _analisar(self, vid):
+        """Roda analise.py no ortomosaico do voo, em segundo plano (le o GeoTIFF reduzido: pouca RAM)."""
+        st = self.storage
+        v = self._voo(vid)
+        if v is None:
+            return self._send(404, {"error": "nao encontrado"})
+        try:
+            import analise  # numpy + rasterio sao opcionais
+        except ImportError as e:
+            return self._send(501, {"error": f"a analise precisa de numpy e rasterio no servidor ({e})"})
+        if "orthophoto.tif" not in st.list_names(f"{vid}/mosaico"):
+            return self._send(409, {"error": "o voo ainda nao tem mosaico (orthophoto.tif)"})
+        with ANALISE_LOCK:
+            if (ANALISES.get(vid) or {}).get("status") == "processando":
+                return self._send(409, {"error": "a analise ja esta em andamento"})
+            ANALISES[vid] = {"status": "processando", "mensagem": "Lendo o mosaico"}
+
+        def run():
+            tmp = None
+            try:
+                data = st.get(f"{vid}/mosaico/orthophoto.tif")
+                fd, tmp = tempfile.mkstemp(suffix=".tif", prefix="agrono-an-")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                del data
+                ANALISES[vid] = {"status": "processando", "mensagem": "Calculando indices"}
+                _, arquivos = analise.analisar(tmp, v.get("corners"))
+                for nome, conteudo in arquivos.items():
+                    st.put(f"{vid}/analise/{nome}", conteudo, mimetypes.guess_type(nome)[0] or "application/octet-stream")
+                ANALISES.pop(vid, None)
+                print(f"analise do voo {vid} pronta ({len(arquivos)} arquivos)", flush=True)
+            except Exception as e:  # noqa: BLE001 - qualquer falha vira estado "erro" na pagina
+                print(f"analise do voo {vid} falhou: {e}", flush=True)
+                ANALISES[vid] = {"status": "erro", "mensagem": str(e)}
+            finally:
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
+
+        threading.Thread(target=run, daemon=True).start()
+        self.log_message("analise do voo %s iniciada", vid)
+        self._send(202, {"ok": True, "status": "processando"})
 
     def _processar(self, vid):
         body = self._read_json()
@@ -590,6 +651,7 @@ async function openVoo(id) {
       ${fotos.length === 0 ? '<button class="btn" id="btnDelVoo" style="margin-left:6px">Excluir voo vazio</button>' : ''}</h1>
     <div id="map"></div>
     <h2>Mosaico</h2><div id="mos"></div>
+    <h2>Análise da lavoura</h2><div id="ana"></div>
     <h2>Parâmetros</h2>
     <div class="grid">
       ${stat('altura (m)', v.altitudeM)}${stat('sobreposição frontal', pct(v.frontOverlap))}${stat('sobreposição lateral', pct(v.sideOverlap))}
@@ -611,6 +673,7 @@ async function openVoo(id) {
   });
   drawMap(v);
   renderMosaico(id, fotos.length);
+  renderAnalise(id);
   const bd = $('#btnDelVoo');
   if (bd) bd.onclick = async () => {
     if (!confirm(`Excluir o voo ${id}? Ele não tem fotos.`)) return;
@@ -827,7 +890,7 @@ $('#btnLogs').onclick = openLogs;
 
 let mosTimer = null;
 async function renderMosaico(id, nFotos) {
-  clearTimeout(mosTimer);
+  clearTimeout(mosTimer); clearTimeout(anaTimer);
   const el = $('#mos');
   if (!el || selected !== id) return;
   const base = `${API}/${encodeURIComponent(id)}`;
@@ -871,7 +934,75 @@ async function renderMosaico(id, nFotos) {
   if (busy) mosTimer = setTimeout(() => renderMosaico(id, nFotos), 5000);
 }
 
+let anaTimer = null, anaLayer = null;
+const ANA_NOMES = { vari: 'VARI', exg: 'ExG', gli: 'GLI', cobertura: 'Cobertura do solo', zonas: 'Zonas de vigor' };
+const fmt = (x, d = 2) => (x == null ? '—' : Number(x).toFixed(d).replace('.', ','));
+async function renderAnalise(id) {
+  clearTimeout(anaTimer);
+  const el = $('#ana');
+  if (!el || selected !== id) return;
+  if (anaLayer && map) { map.removeLayer(anaLayer); anaLayer = null; }
+  const base = `${API}/${encodeURIComponent(id)}`;
+  const a = await fetch(`${base}/analise`).then((r) => r.json()).catch(() => ({ status: 'nenhuma' }));
+  const btn = (txt) => `<button class="voo" id="btnAna" style="width:auto">${txt}</button>`;
+  if (a.status === 'processando') {
+    el.innerHTML = `<div class="tag warn">processando</div> ${esc(a.mensagem || '')}`;
+    anaTimer = setTimeout(() => renderAnalise(id), 3000);
+    return;
+  }
+  if (a.status !== 'pronta') {
+    el.innerHTML = (a.status === 'erro' ? `<div class="tag bad">erro</div> ${esc(a.mensagem || '')}<br>` : '') +
+      `<small style="color:var(--dim)">Índices de vegetação, cobertura do solo e zonas de vigor sobre o mosaico (só RGB). Precisa do mosaico pronto.</small>` +
+      `<div style="margin-top:8px">${btn('Analisar a lavoura')}</div>`;
+  } else {
+    const camadas = ['vari', 'exg', 'gli', 'cobertura', 'zonas'];
+    const radio = (v, t) => `<label style="margin-right:12px;white-space:nowrap"><input type="radio" name="anaL" value="${v}" ${v === '' ? 'checked' : ''}> ${t}</label>`;
+    el.innerHTML = `
+      <div class="grid">${stat('área analisada (ha)', fmt(a.area_ha, 2))}${stat('cobertura do solo', fmt(a.cobertura_pct, 1) + '%')}
+        ${stat('resolução (cm/px)', fmt(a.resolucao_m * 100, 1))}${stat('VARI médio', fmt(a.indices.vari.media))}</div>
+      <div style="margin:10px 0">${radio('', 'Nenhuma')}${radio('mosaico', 'Mosaico')}${camadas.map((c) => radio(c, ANA_NOMES[c])).join('')}</div>
+      <div>Opacidade <input type="range" id="anaOp" min="10" max="100" value="80"></div>
+      <div id="anaLeg" style="margin:10px 0"></div>
+      <table style="border-collapse:collapse;margin-top:6px">
+        <tr style="color:var(--dim);text-align:left"><th style="padding:2px 14px 2px 0">zona de vigor</th><th style="padding:2px 14px 2px 0">área (ha)</th><th>% da área</th></tr>
+        ${a.zonas.map((z) => `<tr><td style="padding:2px 14px 2px 0"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${z.cor};vertical-align:middle"></span> ${esc(z.nome)}</td><td>${fmt(z.area_ha, 3)}</td><td>${fmt(z.pct, 1)}%</td></tr>`).join('')}
+      </table>
+      <p style="color:var(--dim);font-size:12px;margin:10px 0">${esc(a.aviso || '')}</p>
+      ${btn('Analisar de novo')}`;
+    const leg = $('#anaLeg');
+    const aplicar = () => {
+      if (anaLayer && map) { map.removeLayer(anaLayer); anaLayer = null; }
+      const v = (document.querySelector('input[name=anaL]:checked') || {}).value || '';
+      const op = $('#anaOp').value / 100;
+      leg.innerHTML = '';
+      if (!v || !map) return;
+      const url = v === 'mosaico' ? `${base}/mosaico/mosaico.jpg` : `${base}/analise/${v}.png`;
+      anaLayer = L.imageOverlay(`${url}?t=${Math.round(a.gerado)}`, a.bounds, { opacity: op }).addTo(map);
+      if (a.indices[v]) {
+        const i = a.indices[v];
+        leg.innerHTML = `<div style="height:10px;max-width:320px;border-radius:5px;background:linear-gradient(90deg,#a50026,#f46d43,#fee08b,#a6d96a,#1a9850)"></div>` +
+          `<div style="display:flex;justify-content:space-between;max-width:320px;font-size:12px;color:var(--dim)"><span>baixo ${fmt(i.min)}</span><span>alto ${fmt(i.max)}</span></div>`;
+      } else if (v === 'cobertura') {
+        leg.innerHTML = `<small style="color:var(--dim)"><span style="color:#2ea043">■</span> planta · <span style="color:#966846">■</span> solo exposto</small>`;
+      } else if (v === 'zonas') {
+        leg.innerHTML = `<small style="color:var(--dim)">${a.zonas.map((z) => `<span style="color:${z.cor}">■</span> ${esc(z.nome)}`).join(' · ')}</small>`;
+      }
+    };
+    el.querySelectorAll('input[name=anaL]').forEach((r) => (r.onchange = aplicar));
+    $('#anaOp').oninput = () => { if (anaLayer) anaLayer.setOpacity($('#anaOp').value / 100); };
+    anaLayer = null;
+  }
+  const b = $('#btnAna');
+  if (b) b.onclick = async () => {
+    b.disabled = true;
+    const r = await fetch(`${base}/analisar`, { method: 'POST' });
+    if (!r.ok) alert((await r.json().catch(() => ({}))).error || 'Falha ao iniciar a análise');
+    renderAnalise(id);
+  };
+}
+
 function drawMap(v) {
+  anaLayer = null;
   if (map) { map.remove(); map = null; }
   map = L.map('map');
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);

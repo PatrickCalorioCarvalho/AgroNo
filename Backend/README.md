@@ -66,5 +66,15 @@ e `agrono-fly-worker`. Na pagina, abra um voo com pelo menos 3 fotos e clique em
 O estado (fila, processando, concluido, erro) aparece na hora; o resultado fica em `<voo_id>/mosaico/`
 (`orthophoto.tif` para abrir no QGIS e `mosaico.jpg` de previa).
 
+### Analise da lavoura (so RGB)
+
+Ao terminar o mosaico o worker chama `POST /api/voos/<id>/analisar`; o servidor roda `analise.py` em segundo plano
+(numpy + rasterio, le o GeoTIFF reduzido a ~3000 px) e guarda em `<voo_id>/analise/`: mapas de calor **VARI, ExG e GLI**,
+**cobertura do solo** (planta x solo, limiar de Otsu sobre o ExG), **3 zonas de vigor** (quantis do VARI suavizado) e
+`analise.json` (limites no mapa, area em ha, estatisticas). A pagina do voo mostra tudo como camadas sobre o mapa, com
+botao "Analisar a lavoura" / "Analisar de novo". Estatisticas valem so dentro do poligono do voo (se cobrir o mosaico).
+Atencao: a camera do Mavic Pro nao tem infravermelho, entao **nao e NDVI**; os indices dependem da luz e nao sao
+comparaveis entre voos sem calibracao.
+
 A fila e simples: o estado de cada voo fica em `processamento.json` e o worker consulta `POST /api/fila/proximo`.
 Um voo "processando" sem sinal do worker por 30 min volta para a fila. Testado so com um NodeODM falso.
